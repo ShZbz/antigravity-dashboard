@@ -7,7 +7,7 @@
 模型选择旁常驻显示生成速率、缓存命中与上下文占用；悬停上下文，一并查看上下文、5 小时和周额度详情。<br>
 缩略信息常驻；鼠标悬停或打开侧边栏，展开完整多维监控。
 
-[![Version 0.12.5](https://img.shields.io/badge/version-0.12.5-91adff?style=flat-square&labelColor=252936)](CHANGELOG.md)
+[![Version 0.12.6](https://img.shields.io/badge/version-0.12.6-91adff?style=flat-square&labelColor=252936)](CHANGELOG.md)
 [![Platforms](https://img.shields.io/badge/host-Windows%20%7C%20Linux%20%7C%20macOS-83d8b9?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
 [![Antigravity 2.21.1 - 2.34.0](https://img.shields.io/badge/Antigravity-2.21.1%20--%202.34.0-c5a0ff?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
 [![MIT](https://img.shields.io/badge/license-MIT-d4d9e6?style=flat-square&labelColor=252936)](LICENSE)
@@ -22,11 +22,13 @@
 > [!IMPORTANT]
 > **`v0.12.0` Rust 原生引擎提示与回退说明：** `v0.12.0` 正式引入 **Rust 原生加速引擎（`pulse-accel`）**，通过 SQLite 本地直读旁路、二进制用量索引、堆外结构化 Diff 与文本脱敏等底层加速大幅提升界面响应速度，并显著缓解早期版本长时间运行或大账本场景下内存占用过高的问题。由于新引擎刚全量上线，如您在使用过程中遇到任何异常、数据偏差或兼容性问题，欢迎及时前往 [GitHub Issues](https://github.com/ShZbz/antigravity-dashboard/issues) 反馈；如需临时关闭原生加速，可设置环境变量 `PULSE_DISABLE_NATIVE_ACCEL=1` 无缝切换回纯 TypeScript 模式，若问题暂时无法容忍亦可先回退至 **`v0.11.0`** 版本。
 
+**v0.12.6 更新：** 修复 Token 用量详情弹窗悬停 Tooltip 严重偏移问题——将 `#tip` 升级为顶层 `popover="manual"` 以消除 `#usage-dashboard` 打开态 `scale: 1` 导致的 `position: fixed` 包含块偏移与裁切，柱状图 Tooltip 改为锚定实际 `.stack` 柱体并支持底部回退，同时在日视图展示全部 `1..30/31` 日期刻度；同步增强安装器在覆盖更新时自动清理过期运行时文件的能力。
+
 **v0.12.5 更新：** 全面适配 **Antigravity `2.34.0`** — 通过宿主注入的 `ANTIGRAVITY_LS_ADDRESS` / `ANTIGRAVITY_CSRF_TOKEN` 环境变量凭据恢复云端额度与账号邮箱自动识别（附严格环回校验、PID/端口归属校验、Pro/Vertex 双实例隔离与 401/403 平滑降级）；新增无凭据时的**本地 SQLite 直读兜底模式**、侧边栏手动记录账号切换（与邮箱 SHA-256 100% 对齐）及历史会话归属迁移；修复原生 `/swarm` 子代理在侧边栏显示「未命名会话」的问题；新增 `Gemini 4 Neon (High)` (`MODEL_PLACEHOLDER_M532`) 模型映射，并优化侧边栏动画流畅度、5h 耗尽态圆环与额度实时刷新策略。
 
-**v0.12.4 更新：** 全面适配 **Antigravity `2.33.0`**（兼容 `panelScope` 与 `auxPaneComponent` Redux 侧栏派发及 `?cascadeId=` 会话解析，修复底栏「打开侧边栏」按钮；约束非独立预览模式下侧边栏 `.widget` 卡片高度以恢复鼠标滚轮上下滚动）；将侧边栏右上角设置升级为统一齿轮弹窗（整合**可选默认关闭**的快捷方式调试启动开关、`简体中文`/`English` 语言切换以及三端 `Aa` 字体缩放），并在采样模型行新增**「用量统计」**按钮（当底栏调试未启用时可在侧边栏内嵌打开完整 Token 用量大盘）。
+**v0.12.4 更新：** 全面适配 **Antigravity `2.33.0`**（兼容 `panelScope` 与 `auxPaneComponent` Redux 侧栏派发及 `?cascadeId=` 会话解析，修复底栏「打开侧边栏」按钮；约束非独立预览模式下侧边栏 `.widget` 卡片高度以恢复鼠标滚轮上下滚动）；将侧边栏右上角设置升级为统一齿轮弹窗（整合**可选默认关闭**的快捷方式调试启动开关、`简体中文`/`English` 语言切换以及三端 `Aa` 字体缩放），并在采样模型行新增**「用量统计」**按钮（当底栏调试未启用时可在侧边栏内嵌打开完整 Token 用量大盘）。[更新说明](CHANGELOG.md)。
 
-**v0.12.3 更新：** 重构侧边栏面板（标题栏同心圆环多模型额度胶囊与悬停/点击倒计时弹出卡、双列 Speed/Cache 指标卡与内嵌上下文进度条、可点击折叠的详情卡区域、防跳动吸底布局及 `@container sidebar` 容器响应式断点）；优化 Token 用量弹窗标签栏账号切换器与细节布局；引入 Rust `readLedgerProjectSummariesJson` + `project-ledger-v1.bin` + `project-meta-v1.json` 与查表/二分高速时区计算以大幅提升项目统计速度；修复项目统计切换账号无法按 `viewScope` / `ownership-v1.json` 正确隔离与去重的 Bug。[更新说明](CHANGELOG.md)。
+**v0.12.3 更新：** 重构侧边栏面板（标题栏同心圆环多模型额度胶囊与悬停/点击倒计时弹出卡、双列 Speed/Cache 指标卡与内嵌上下文进度条、可点击折叠的详情卡区域、防跳动吸底布局及 `@container sidebar` 容器响应式断点）；优化 Token 用量弹窗标签栏账号切换器与细节布局；引入 Rust `readLedgerProjectSummariesJson` + `project-ledger-v1.bin` + `project-meta-v1.json` 与查表/二分高速时区计算以大幅提升项目统计速度；修复项目统计切换账号无法按 `viewScope` / `ownership-v1.json` 正确隔离与去重的 Bug。
 
 **v0.12.1 更新：** 修复 `v0.12.0` 发布包未包含 Rust 原生二进制的问题，将 5 平台预编译 `pulse-accel.<platform>-<arch>.node` 与独立 CLI 二进制 `ag-pulse-statusline.*` 直接打包进 Release ZIP 与 IDE VSIX；串联 `native.yml` 与 `release.yml` 流水线、在 Windows 打包时保留 Linux/macOS 可执行权限，并在发布校验阶段强制检查 5 平台原生产物完整性。
 
@@ -91,7 +93,7 @@
 ## Antigravity IDE
 
 **v0.7.0+** 提供反重力独立 IDE 的专用 VSIX 适配。从发布页下载
-`antigrative-dashboard-ide-0.12.5.vsix`，在 IDE 扩展页选择「从 VSIX 安装」，无需先装桌面 App。
+`antigrative-dashboard-ide-0.12.6.vsix`，在 IDE 扩展页选择「从 VSIX 安装」，无需先装桌面 App。
 
 完全退出 IDE 后，使用带
 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1`

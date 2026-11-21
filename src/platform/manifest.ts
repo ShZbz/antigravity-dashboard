@@ -14,6 +14,23 @@ export const CLI_INSTALL_NAME = 'antigrative-dashboard-cli';
 
 export const DESKTOP_RUNTIME_ROOTS = ['assets', 'compat', 'sidecars', 'plugin.json'] as const;
 
+export const DESKTOP_RUNTIME_EXCLUDED_DIRS = new Set<string>([
+  'tests',
+]);
+
+export const DESKTOP_RUNTIME_EXCLUDED_REL_FILES = new Set<string>([
+  'sidecars/panel/toolbar-preview.html',
+]);
+
+export const DESKTOP_RUNTIME_IGNORED_SUFFIXES = new Set<string>([
+  '.pyc',
+  '.log',
+  '.pdb',
+  '.exp',
+  '.lib',
+  '.exe',
+]);
+
 export const DESKTOP_REQUIRED_FILES = [
   'plugin.json',
   'compat/inline-widget.cjs',

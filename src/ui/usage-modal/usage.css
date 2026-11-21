@@ -122,7 +122,7 @@
 
 .footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: auto; padding-top: 20px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }
 .alert { color: var(--pulse-warning); margin-top: 12px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); }
-.tip { position: fixed; z-index: 20; max-width: 280px; padding: 12px 14px; border: 1px solid var(--pulse-border); border-radius: 9px; background: var(--pulse-menu); box-shadow: 0 8px 30px var(--pulse-shadow); color: var(--pulse-foreground); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); pointer-events: none; opacity: 1; transition: opacity 120ms ease, transform 120ms cubic-bezier(.22, 1, .36, 1); }
+.tip { position: fixed; inset: auto; margin: 0; z-index: 20; max-width: 280px; padding: 12px 14px; border: 1px solid var(--pulse-border); border-radius: 9px; background: var(--pulse-menu); box-shadow: 0 8px 30px var(--pulse-shadow); color: var(--pulse-foreground); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); pointer-events: none; opacity: 1; transition: opacity 120ms ease, transform 120ms cubic-bezier(.22, 1, .36, 1); }
 .tip[hidden] { display: none; }
 @starting-style { .tip:not([hidden]) { opacity: .15; transform: translateY(3px); } }
 .tip .tip-title { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-bottom: 5px; }

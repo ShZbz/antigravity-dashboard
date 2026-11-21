@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -27,7 +28,28 @@ RUNTIME_FILES = ('assets', 'compat', 'sidecars', 'plugin.json')
 DIST_FILES = ('plugin.json', 'assets', 'sidecars', 'compat', 'cli', 'ide', 'manage.mjs', 'manage.py', 'install.ps1',
               'uninstall.ps1', 'install.sh', 'uninstall.sh', 'README.md', 'LICENSE', 'CHANGELOG.md', 'COMPATIBILITY.md', 'docs', 'package.json',
               '.gitignore', '.gitattributes', '.github', 'tests', 'tools', 'GITHUB_RELEASE.md', 'README.zh-CN.md')
-IGNORED = {'__pycache__', '.data', 'node_modules', '.git', 'dist', 'internal', 'target', 'REFACTORING_ROADMAP.md', 'data', 'history-v1', 'usage-v1', 'timeline-v1', 'sdk'}
+PRIVATE_RUNTIME_DIRS = frozenset({'data', 'history-v1', 'usage-v1', 'timeline-v1', 'sdk'})
+DESKTOP_RUNTIME_EXCLUDED_DIRS = frozenset({'tests'})
+DESKTOP_RUNTIME_EXCLUDED_REL_FILES = frozenset({'sidecars/panel/toolbar-preview.html'})
+DESKTOP_RUNTIME_IGNORED_SUFFIXES = frozenset({'.pyc', '.log', '.pdb', '.exp', '.lib', '.exe'})
+IGNORED = {
+    '__pycache__',
+    '.pytest_cache',
+    '.data',
+    'node_modules',
+    '.git',
+    'dist',
+    'internal',
+    'target',
+    'ag-pulse-statusline',
+    'ag-pulse-statusline.exe',
+    'ag-pulse-statusline.darwin-x64',
+    'ag-pulse-statusline.darwin-arm64',
+    'ag-pulse-statusline.linux-x64',
+    'ag-pulse-statusline.linux-arm64',
+    'REFACTORING_ROADMAP.md',
+    *PRIVATE_RUNTIME_DIRS,
+}
 RELEASE_NATIVE_PLATFORMS = ('win32-x64', 'darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64')
 RELEASE_NATIVE_ADDONS = tuple(f'sidecars/panel/pulse-accel.{tag}.node' for tag in RELEASE_NATIVE_PLATFORMS)
 RELEASE_NATIVE_CLI_BINS = tuple(
@@ -83,10 +105,14 @@ def vertex_paths():
     }
 
 def _is_reparse_or_symlink(path: Path) -> bool:
-    if path.is_symlink():
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode) or bool(getattr(info, 'st_file_attributes', 0) & 0x400):
         return True
     if not path.exists():
-        return False
+        return True
     return path.resolve() != (path.parent.resolve() / path.name)
 
 def own_plugin(plugin_dir=None, home_dir=None):
@@ -213,6 +239,104 @@ def remove_verified_legacy_adapter():
         raise RuntimeError('The legacy adapter has unknown app changes; refusing to overwrite them. Inspect its backup first.')
 
 
+def _should_skip_desktop_runtime(rel_posix, name, is_dir):
+    if is_dir and name in DESKTOP_RUNTIME_EXCLUDED_DIRS:
+        return True
+    if not is_dir and rel_posix in DESKTOP_RUNTIME_EXCLUDED_REL_FILES:
+        return True
+    if name in IGNORED:
+        return True
+    return Path(name).suffix.lower() in DESKTOP_RUNTIME_IGNORED_SUFFIXES
+
+def _should_preserve_desktop_runtime(name, is_dir):
+    return name == '.data' or (is_dir and name in PRIVATE_RUNTIME_DIRS)
+
+def _entry_compare_key(name):
+    return name.lower() if (os.name == 'nt' or sys.platform == 'darwin') else name
+
+def _path_lstat(path: Path):
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+
+def _remove_path(path: Path) -> None:
+    info = _path_lstat(path)
+    if info is None:
+        return
+    is_reparse = bool(getattr(info, 'st_file_attributes', 0) & 0x400)
+    is_link = stat.S_ISLNK(info.st_mode) or is_reparse or _is_reparse_or_symlink(path)
+    if is_link:
+        if os.name == 'nt' and (bool(getattr(info, 'st_file_attributes', 0) & 0x10) or stat.S_ISDIR(info.st_mode)):
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+    elif stat.S_ISDIR(info.st_mode):
+        for child in list(path.iterdir()):
+            _remove_path(child)
+        path.rmdir()
+    else:
+        path.unlink(missing_ok=True)
+
+def _sync_runtime_tree(source, target, rel_prefix=''):
+    if not source.is_dir():
+        target_info = _path_lstat(target)
+        if target_info is not None and (
+            stat.S_ISDIR(target_info.st_mode)
+            or stat.S_ISLNK(target_info.st_mode)
+            or _is_reparse_or_symlink(target)
+        ):
+            _remove_path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        return
+    target_info = _path_lstat(target)
+    if target_info is not None and (
+        not stat.S_ISDIR(target_info.st_mode)
+        or stat.S_ISLNK(target_info.st_mode)
+        or _is_reparse_or_symlink(target)
+    ):
+        _remove_path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    expected = {}
+    for entry in source.iterdir():
+        rel_posix = f'{rel_prefix}/{entry.name}' if rel_prefix else entry.name
+        is_dir = entry.is_dir() and not entry.is_symlink() and not _is_reparse_or_symlink(entry)
+        if _should_skip_desktop_runtime(rel_posix, entry.name, is_dir):
+            continue
+        dst_child = target / entry.name
+        dst_info = _path_lstat(dst_child)
+        if is_dir:
+            expected[_entry_compare_key(entry.name)] = 'dir'
+            if dst_info is not None and (
+                not stat.S_ISDIR(dst_info.st_mode)
+                or stat.S_ISLNK(dst_info.st_mode)
+                or _is_reparse_or_symlink(dst_child)
+            ):
+                _remove_path(dst_child)
+            _sync_runtime_tree(entry, dst_child, rel_posix)
+        elif entry.is_file() and not entry.is_symlink():
+            expected[_entry_compare_key(entry.name)] = 'file'
+            if dst_info is not None and (
+                stat.S_ISDIR(dst_info.st_mode)
+                or stat.S_ISLNK(dst_info.st_mode)
+                or _is_reparse_or_symlink(dst_child)
+            ):
+                _remove_path(dst_child)
+            shutil.copy2(entry, dst_child)
+    for entry in list(target.iterdir()):
+        entry_info = _path_lstat(entry)
+        if entry_info is None:
+            continue
+        is_link = stat.S_ISLNK(entry_info.st_mode) or _is_reparse_or_symlink(entry)
+        is_dir = not is_link and stat.S_ISDIR(entry_info.st_mode)
+        if _should_preserve_desktop_runtime(entry.name, is_dir):
+            continue
+        expected_kind = expected.get(_entry_compare_key(entry.name))
+        if is_link or expected_kind is None or (expected_kind == 'dir') != is_dir:
+            _remove_path(entry)
+
+
 @lifecycle_operation
 def install(panel_only=False, legacy_loader=False, instance='all'):
     _validate_instance(instance)
@@ -250,11 +374,13 @@ def install(panel_only=False, legacy_loader=False, instance='all'):
             source, target = SOURCE / name, dest / name
             if source.resolve() == target.resolve():
                 continue
-            if source.is_dir():
-                shutil.copytree(source, target, dirs_exist_ok=True,
-                                ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.log', '*.pdb', '*.exp', '*.lib', '*.exe', '.data', 'node_modules', 'data', 'history-v1', 'usage-v1', 'timeline-v1', 'sdk'))
-            else:
-                shutil.copy2(source, target)
+            _sync_runtime_tree(source, target, name)
+        stray_lock = dest / '.antigravity-pulse-update.lock'
+        if SOURCE.resolve() != dest.resolve() and stray_lock.exists() and not _is_reparse_or_symlink(stray_lock) and stray_lock.is_file():
+            try:
+                stray_lock.unlink(missing_ok=True)
+            except OSError:
+                pass
         if local_accounts.is_file():
             target_accounts = dest / '.data' / 'usage-accounts.local.json'
             if local_accounts.resolve() != target_accounts.resolve():

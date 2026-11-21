@@ -66,8 +66,7 @@ export function createHeatmapController(
   const openYear = (): void => {
     const menu = $('year-menu');
     if (!menu) return;
-    const tip = $('tip');
-    if (tip) tip.hidden = true;
+    tooltip.hide();
     menu.showPopover();
     $('year')?.setAttribute('aria-expanded', 'true');
     positionYear();

@@ -2,6 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -11,10 +12,14 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
+  DESKTOP_RUNTIME_EXCLUDED_DIRS,
+  DESKTOP_RUNTIME_EXCLUDED_REL_FILES,
+  DESKTOP_RUNTIME_IGNORED_SUFFIXES,
   DESKTOP_RUNTIME_ROOTS,
   IDE_EXTENSION_ID,
   PACKAGER_IGNORED_NAMES,
   PLUGIN_NAME,
+  PRIVATE_RUNTIME_DIRS,
 } from '../platform/manifest.ts';
 import { instancePaths, type InstancePaths } from '../platform/paths.ts';
 import { withFileLockSync } from '../shared/file-lock.ts';
@@ -73,6 +78,23 @@ export const IDE_DEBUG_ARGS = [
   '--remote-debugging-port=0',
   '--remote-debugging-address=127.0.0.1',
 ] as const;
+
+const PRIVATE_RUNTIME_DIR_SET = new Set<string>(PRIVATE_RUNTIME_DIRS);
+
+function shouldSkipDesktopRuntimeEntry(relPath: string, entryName: string, isDir: boolean): boolean {
+  if (isDir && DESKTOP_RUNTIME_EXCLUDED_DIRS.has(entryName)) return true;
+  if (!isDir && DESKTOP_RUNTIME_EXCLUDED_REL_FILES.has(relPath)) return true;
+  if (PACKAGER_IGNORED_NAMES.has(entryName)) return true;
+  const lower = entryName.toLowerCase();
+  for (const suffix of DESKTOP_RUNTIME_IGNORED_SUFFIXES) {
+    if (lower.endsWith(suffix)) return true;
+  }
+  return false;
+}
+
+function shouldPreserveDesktopRuntimeEntry(_relPath: string, entryName: string, isDir: boolean): boolean {
+  return entryName === '.data' || (isDir && PRIVATE_RUNTIME_DIR_SET.has(entryName));
+}
 
 function validateInstance(instance: string): asserts instance is LifecycleInstanceTarget {
   if (instance !== 'all' && instance !== 'pro' && instance !== 'vertex') {
@@ -290,18 +312,20 @@ export function installDesktop(options: InstallDesktopOptions): void {
         const src = join(options.sourceRoot, name);
         const dst = join(dest, name);
         if (resolve(src) === resolve(dst)) continue;
-        copyTreeFilteredSync(src, dst, (_rel, entryName) => {
-          const lower = entryName.toLowerCase();
-          return (
-            PACKAGER_IGNORED_NAMES.has(entryName) ||
-            lower.endsWith('.pyc') ||
-            lower.endsWith('.log') ||
-            lower.endsWith('.pdb') ||
-            lower.endsWith('.exp') ||
-            lower.endsWith('.lib') ||
-            lower.endsWith('.exe')
-          );
+        copyTreeFilteredSync(src, dst, shouldSkipDesktopRuntimeEntry, name, {
+          prune: true,
+          shouldPreserve: shouldPreserveDesktopRuntimeEntry,
         });
+      }
+      if (resolve(options.sourceRoot) !== resolve(dest)) {
+        const strayLock = join(dest, '.antigravity-pulse-update.lock');
+        if (existsSync(strayLock) && !isReparseOrSymlink(strayLock) && lstatSync(strayLock).isFile()) {
+          try {
+            rmSync(strayLock, { force: true });
+          } catch {
+            // Best-effort cleanup of stray lock inside plugin root (real lock lives in parent dir).
+          }
+        }
       }
       if (existsSync(localAccounts) && statSync(localAccounts).isFile()) {
         const targetAccounts = join(dest, '.data', 'usage-accounts.local.json');

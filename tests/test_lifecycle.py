@@ -207,4 +207,123 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(self.plugin.exists())
         self.assertFalse(vp['plugin'].exists())
 
+    def test_desktop_install_excludes_dev_files_prunes_stale_and_preserves_data(self):
+        source = self.home / 'fixture-source'
+        for sub in ('assets', 'compat', 'sidecars/panel/tests', 'sidecars/panel/__pycache__'):
+            (source / sub).mkdir(parents=True)
+        (source / 'compat' / 'update-lock.py').write_text((ROOT / 'compat' / 'update-lock.py').read_text(encoding='utf-8'), encoding='utf-8')
+        (source / 'assets' / 'logo.svg').write_text('<svg/>', encoding='utf-8')
+        (source / 'sidecars' / 'panel' / 'main.mjs').write_text('// panel v2', encoding='utf-8')
+        (source / 'sidecars' / 'panel' / 'pulse-accel.node').write_bytes(b'native-addon')
+        (source / 'sidecars' / 'panel' / 'toolbar-preview.html').write_text('<html>preview</html>', encoding='utf-8')
+        (source / 'sidecars' / 'panel' / 'tests' / 'sample.test.mjs').write_text('// test', encoding='utf-8')
+        (source / 'sidecars' / 'panel' / '__pycache__' / 'x.pyc').write_bytes(b'pyc')
+        manager.atomic_json(source / 'plugin.json', {'name': 'antigravity-pulse', 'version': '0.12.5'})
+        manager.atomic_json(source / '.data' / 'usage-accounts.local.json', {'acct1': {'email': 'a@example.test'}})
+
+        # Pre-populate target with stale files, leaked tests/preview, stray inner lock, and preserved data
+        for sub in ('sidecars/panel/tests', 'sidecars/panel/data', 'sidecars/panel/history-v1', '.data'):
+            (self.plugin / sub).mkdir(parents=True)
+        manager.atomic_json(self.plugin / 'plugin.json', {'name': 'antigravity-pulse', 'version': '0.12.4'})
+        (self.plugin / 'sidecars' / 'panel' / 'background-worker.mjs').write_text('// stale', encoding='utf-8')
+        (self.plugin / 'sidecars' / 'panel' / 'usage-disk-worker.mjs').write_text('// stale', encoding='utf-8')
+        (self.plugin / 'sidecars' / 'panel' / 'sidebar-preview.html').write_text('<html>stale</html>', encoding='utf-8')
+        (self.plugin / 'sidecars' / 'panel' / 'toolbar-preview.html').write_text('<html>leaked</html>', encoding='utf-8')
+        (self.plugin / 'sidecars' / 'panel' / 'tests' / 'old.test.mjs').write_text('// leaked', encoding='utf-8')
+        (self.plugin / 'sidecars' / 'panel' / 'data' / 'legacy.json').write_text('{"keep":true}', encoding='utf-8')
+        (self.plugin / 'sidecars' / 'panel' / 'history-v1' / 'conv.json').write_text('{"keep":true}', encoding='utf-8')
+        (self.plugin / '.data' / 'custom-state.json').write_text('{"keep":true}', encoding='utf-8')
+        (self.plugin / '.antigravity-pulse-update.lock').write_text('0', encoding='utf-8')
+
+        with patch.multiple(manager, SOURCE=source):
+            manager.install(panel_only=True, instance='pro')
+
+        self.assertEqual((self.plugin / 'sidecars' / 'panel' / 'main.mjs').read_text(encoding='utf-8'), '// panel v2')
+        self.assertEqual((self.plugin / 'sidecars' / 'panel' / 'pulse-accel.node').read_bytes(), b'native-addon')
+        self.assertEqual(manager.json_read(self.plugin / 'plugin.json')['version'], '0.12.5')
+        self.assertFalse((self.plugin / 'sidecars' / 'panel' / 'tests').exists())
+        self.assertFalse((self.plugin / 'sidecars' / 'panel' / 'toolbar-preview.html').exists())
+        self.assertFalse((self.plugin / 'sidecars' / 'panel' / '__pycache__').exists())
+        self.assertFalse((self.plugin / 'sidecars' / 'panel' / 'background-worker.mjs').exists())
+        self.assertFalse((self.plugin / 'sidecars' / 'panel' / 'usage-disk-worker.mjs').exists())
+        self.assertFalse((self.plugin / 'sidecars' / 'panel' / 'sidebar-preview.html').exists())
+        self.assertFalse((self.plugin / '.antigravity-pulse-update.lock').exists())
+        self.assertEqual((self.plugin / '.data' / 'custom-state.json').read_text(encoding='utf-8'), '{"keep":true}')
+        self.assertEqual(manager.json_read(self.plugin / '.data' / 'usage-accounts.local.json')['acct1']['email'], 'a@example.test')
+        self.assertEqual((self.plugin / 'sidecars' / 'panel' / 'data' / 'legacy.json').read_text(encoding='utf-8'), '{"keep":true}')
+        self.assertEqual((self.plugin / 'sidecars' / 'panel' / 'history-v1' / 'conv.json').read_text(encoding='utf-8'), '{"keep":true}')
+
+    def test_sync_runtime_tree_handles_live_and_broken_junctions_without_touching_targets(self):
+        import subprocess
+        def make_dir_link(link_path, target_path):
+            if os.name == 'nt':
+                subprocess.run(['cmd', '/c', 'mklink', '/J', str(link_path), str(target_path)],
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.symlink(target_path, link_path, target_is_directory=True)
+
+        src = self.home / 'link-src'
+        dst = self.home / 'link-dst'
+        external = self.home / 'external-target'
+        external_replace = self.home / 'external-replace'
+        broken_target = self.home / 'broken-target'
+
+        (src / 'sub').mkdir(parents=True)
+        (src / 'main.mjs').write_text('// real file', encoding='utf-8')
+        (src / 'sub' / 'item.mjs').write_text('// real sub', encoding='utf-8')
+        external.mkdir()
+        (external / 'secret.txt').write_text('do-not-delete', encoding='utf-8')
+        external_replace.mkdir()
+        (external_replace / 'keep.txt').write_text('still-intact', encoding='utf-8')
+        broken_target.mkdir()
+
+        (dst / 'stale-dir').mkdir(parents=True)
+        make_dir_link(dst / 'stale-link', external)
+        make_dir_link(dst / 'stale-dir' / 'nested-link', external)
+        make_dir_link(dst / 'sub', external_replace)
+        make_dir_link(dst / 'main.mjs', broken_target)
+        make_dir_link(dst / 'broken-stale', broken_target)
+        broken_target.rmdir()
+
+        external_file = self.home / 'external-file.txt'
+        external_file.write_text('untouched-external-file', encoding='utf-8')
+        file_symlink_created = False
+        try:
+            (src / 'file-target.mjs').write_text('// fresh file', encoding='utf-8')
+            os.symlink(external_file, dst / 'file-target.mjs')
+            file_symlink_created = True
+        except OSError:
+            (src / 'file-target.mjs').unlink(missing_ok=True)
+
+        single_src = self.home / 'plugin.json'
+        single_dst = self.home / 'plugin-dst.json'
+        single_src.write_text('{"name":"antigravity-pulse"}\n', encoding='utf-8')
+        broken_single = self.home / 'broken-single'
+        broken_single.mkdir()
+        make_dir_link(single_dst, broken_single)
+        broken_single.rmdir()
+
+        manager._sync_runtime_tree(src, dst, 'sidecars')
+        manager._sync_runtime_tree(single_src, single_dst, 'plugin.json')
+
+        self.assertEqual((dst / 'main.mjs').read_text(encoding='utf-8'), '// real file')
+        self.assertFalse(manager._is_reparse_or_symlink(dst / 'main.mjs'))
+        self.assertEqual((dst / 'sub' / 'item.mjs').read_text(encoding='utf-8'), '// real sub')
+        self.assertFalse(manager._is_reparse_or_symlink(dst / 'sub'))
+        self.assertEqual(single_dst.read_text(encoding='utf-8'), '{"name":"antigravity-pulse"}\n')
+        self.assertFalse(manager._is_reparse_or_symlink(single_dst))
+
+        self.assertFalse(os.path.lexists(dst / 'stale-link'))
+        self.assertFalse(os.path.lexists(dst / 'stale-dir'))
+        self.assertFalse(os.path.lexists(dst / 'broken-stale'))
+
+        # External targets must remain untouched
+        self.assertEqual((external / 'secret.txt').read_text(encoding='utf-8'), 'do-not-delete')
+        self.assertEqual((external_replace / 'keep.txt').read_text(encoding='utf-8'), 'still-intact')
+        self.assertFalse((external_replace / 'item.mjs').exists())
+        if file_symlink_created:
+            self.assertEqual((dst / 'file-target.mjs').read_text(encoding='utf-8'), '// fresh file')
+            self.assertFalse(manager._is_reparse_or_symlink(dst / 'file-target.mjs'))
+            self.assertEqual(external_file.read_text(encoding='utf-8'), 'untouched-external-file')
+
 if __name__ == '__main__': unittest.main()

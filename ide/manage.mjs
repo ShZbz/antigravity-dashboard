@@ -10,11 +10,12 @@ import { execFileSync as execFileSync2, spawn as spawn2 } from "node:child_proce
 import {
   copyFileSync as copyFileSync2,
   existsSync as existsSync5,
+  lstatSync as lstatSync2,
   mkdirSync as mkdirSync5,
   readdirSync as readdirSync4,
   readFileSync as readFileSync7,
   realpathSync as realpathSync3,
-  rmSync as rmSync2,
+  rmSync as rmSync3,
   statSync as statSync5
 } from "node:fs";
 import { dirname as dirname6, join as join5, resolve as resolve3 } from "node:path";
@@ -110,6 +111,7 @@ import {
   readdirSync,
   readFileSync as readFileSync4,
   realpathSync as realpathSync2,
+  rmSync,
   statSync as statSync3
 } from "node:fs";
 import { basename as basename2, delimiter, dirname as dirname4, join as join2, resolve } from "node:path";
@@ -180,6 +182,7 @@ function readJsonObjectSync(filePath, fallback = {}) {
   }
   return parsed;
 }
+var isCaseInsensitivePlatform = process.platform === "win32" || process.platform === "darwin";
 
 // src/lifecycle/debug-launch.ts
 import { execFile, execFileSync, spawn } from "node:child_process";
@@ -192,7 +195,7 @@ import {
   readdirSync as readdirSync3,
   readFileSync as readFileSync6,
   readSync,
-  rmSync,
+  rmSync as rmSync2,
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { mkdir as mkdir2, readdir, rm as rm2 } from "node:fs/promises";
@@ -232,6 +235,7 @@ var IDE_DEBUG_ARGS = [
   "--remote-debugging-port=0",
   "--remote-debugging-address=127.0.0.1"
 ];
+var PRIVATE_RUNTIME_DIR_SET = new Set(PRIVATE_RUNTIME_DIRS);
 function resolveIdeApplication(executable) {
   const resolved = resolve3(executable);
   if (!existsSync5(resolved) || !statSync5(resolved).isFile()) {

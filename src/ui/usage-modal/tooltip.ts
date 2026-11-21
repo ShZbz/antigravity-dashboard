@@ -27,9 +27,46 @@ export function createTooltipController(ctx: UsageDomContext, palette: UsagePale
     }
   };
 
+  const hidePopoverIfOpen = (tip: HTMLElement): void => {
+    try {
+      if (typeof tip.hidePopover === 'function' && tip.matches(':popover-open')) tip.hidePopover();
+    } catch {
+      // Ignore if Popover API is unavailable or element is disconnected.
+    }
+  };
+
+  const revealTip = (tip: HTMLElement, target: Element): void => {
+    tip.hidden = false;
+    try {
+      if (tip.isConnected && typeof tip.showPopover === 'function' && !tip.matches(':popover-open')) {
+        tip.showPopover();
+      }
+    } catch {
+      // Ignore if Popover API is unavailable or element cannot enter top layer.
+    }
+    const anchor = target.classList?.contains('bar-column') ? target.querySelector('.stack') || target : target;
+    const rect = anchor.getBoundingClientRect();
+    const bounds = dialog.getBoundingClientRect();
+    const r = tip.getBoundingClientRect();
+    const left = Math.max(
+      bounds.left + 12,
+      Math.min(bounds.right - r.width - 12, rect.left + rect.width / 2 - r.width / 2),
+    );
+    const aboveTop = rect.top - r.height - 10;
+    const top =
+      aboveTop >= bounds.top + 12
+        ? aboveTop
+        : Math.min(bounds.bottom - r.height - 12, Math.max(bounds.top + 12, rect.bottom + 10));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  };
+
   const hide = (): void => {
     const tip = $('tip');
-    if (tip) tip.hidden = true;
+    if (tip) {
+      hidePopoverIfOpen(tip);
+      tip.hidden = true;
+    }
     tipTarget = null;
     tipItem = null;
     highlightItem(null);
@@ -89,12 +126,7 @@ export function createTooltipController(ctx: UsageDomContext, palette: UsagePale
       }
     }
 
-    tip.hidden = false;
-    const rect = target.getBoundingClientRect();
-    const bounds = dialog.getBoundingClientRect();
-    const r = tip.getBoundingClientRect();
-    tip.style.left = `${Math.min(bounds.right - r.width - 12, Math.max(bounds.left + 12, rect.left + rect.width / 2 - r.width / 2))}px`;
-    tip.style.top = `${Math.max(bounds.top + 12, rect.top - r.height - 10)}px`;
+    revealTip(tip, target);
   };
 
   const bindBucket = (
@@ -126,12 +158,7 @@ export function createTooltipController(ctx: UsageDomContext, palette: UsagePale
     tipTarget = target;
     tipItem = null;
     tip.replaceChildren(...nodes);
-    tip.hidden = false;
-    const rect = target.getBoundingClientRect();
-    const bounds = dialog.getBoundingClientRect();
-    const r = tip.getBoundingClientRect();
-    tip.style.left = `${Math.min(bounds.right - r.width - 12, Math.max(bounds.left + 12, rect.left + rect.width / 2 - r.width / 2))}px`;
-    tip.style.top = `${Math.max(bounds.top + 12, rect.top - r.height - 10)}px`;
+    revealTip(tip, target);
   };
 
   return { show, showNodes, hide, highlightItem, bindBucket };

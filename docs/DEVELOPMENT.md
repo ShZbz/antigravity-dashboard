@@ -53,7 +53,7 @@ node --expose-gc tools/check-transcript-resources.mjs
 
 # 6. 生成 dist/ 发行包（App/CLI ZIP + IDE VSIX + SHA256）并校验发布完整性
 npm run package
-node tools/publish-release.mjs --tag v0.12.5 --check-only
+node tools/publish-release.mjs --tag v0.12.6 --check-only
 ```
 
 ## 本地实时预览

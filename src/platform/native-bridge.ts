@@ -531,8 +531,6 @@ export function rotateLogTailNative(
 
 type RawStringAddonMethod =
   | 'coalesceSwimlanesJson'
-  | 'compileCatmullRomSvgPathJson'
-  | 'projectTrajectoryJson'
   | 'scanTranscriptFileJson';
 
 function callRawSingleStringAddon(methodName: RawStringAddonMethod, inputJson: string): string | null {
@@ -551,16 +549,6 @@ function callRawSingleStringAddon(methodName: RawStringAddonMethod, inputJson: s
 /** Coalesces timeline swimlanes in Rust `pulse-accel`, returning raw JSON or `null`. */
 export function tryCoalesceSwimlanesJson(inputJson: string): string | null {
   return callRawSingleStringAddon('coalesceSwimlanesJson', inputJson);
-}
-
-/** Compiles a Catmull-Rom SVG path/area pair in Rust `pulse-accel`, returning raw JSON or `null`. */
-export function tryCompileCatmullRomSvgPathJson(inputJson: string): string | null {
-  return callRawSingleStringAddon('compileCatmullRomSvgPathJson', inputJson);
-}
-
-/** Projects a trajectory payload in Rust `pulse-accel`, returning raw JSON or `null`. */
-export function tryProjectTrajectoryJson(inputJson: string): string | null {
-  return callRawSingleStringAddon('projectTrajectoryJson', inputJson);
 }
 
 /** Scans a JSONL transcript file directly in Rust `pulse-accel`, returning raw JSON or `null`. */

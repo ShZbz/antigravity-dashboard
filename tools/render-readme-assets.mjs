@@ -88,7 +88,7 @@ try{
     await page.evaluate(()=>document.fonts.ready);await save(page,`${kind}${suffix}.png`);
    }finally{await page.close();}
   }
-  for(const card of ['speed','cache','context']){
+  for(const card of (lang==='zh'?['context']:['speed','cache','context'])){
    const page=await browser.newPage({viewport:{width:1000,height:920},deviceScaleFactor:2});page.on('pageerror',e=>errors.push(e.message));
    try{
     await page.goto(`${base}/fixture?lang=${lang}&scope=main&width=940`);await ready(page,'main','full');const host=page.locator('#ag-pulse-status-bar');
@@ -101,12 +101,12 @@ try{
     await save(page,`${card==='cache'?'widget':card}${suffix}.png`,{x:left,y:top,width:right-left,height:bottom-top});
    }finally{await page.close();}
   }
-  for(const kind of ['overview','details','intro']){
+  for(const kind of (lang==='zh'?['overview']:['overview','details'])){
    const page=await browser.newPage({viewport:{width:1200,height:900},deviceScaleFactor:2});page.on('pageerror',e=>errors.push(e.message));
    try{
     await page.goto(`${base}/fixture?lang=${lang}&scope=main&width=940`);await ready(page,'main','full');
     await page.locator('[data-card=cache]').click();await page.locator('#open-usage').click();
-    if(kind!=='intro')await page.locator('#usage-intro-done').click();
+    await page.locator('#usage-intro-done').click();
     if(kind==='details')await page.locator('#details-tab').click();
     await page.evaluate(()=>document.fonts.ready);await page.waitForTimeout(150);
     await page.locator('#usage-dashboard').screenshot({path:join(output,`usage-${kind}${suffix}.png`)});files.push(`usage-${kind}${suffix}.png`);

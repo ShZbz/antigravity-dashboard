@@ -36,7 +36,14 @@ export function createFocusTrap(ctx: UsageDomContext, handlers: FocusTrapHandler
     handlers.onCloseSubPopovers?.();
     conceal();
     const tip = $('tip');
-    if (tip) tip.hidden = true;
+    if (tip) {
+      try {
+        if (typeof tip.hidePopover === 'function' && tip.matches(':popover-open')) tip.hidePopover();
+      } catch {
+        // Ignore if Popover API is unavailable.
+      }
+      tip.hidden = true;
+    }
     state.opener?.focus({ preventScroll: true });
   };
 

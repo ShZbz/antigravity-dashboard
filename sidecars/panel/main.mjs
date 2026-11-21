@@ -27,7 +27,7 @@ import {
   readdirSync as readdirSync2,
   readFileSync as readFileSync3,
   readSync,
-  rmSync,
+  rmSync as rmSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { mkdir as mkdir2, readdir, rm as rm2 } from "node:fs/promises";
@@ -44,6 +44,7 @@ import {
   readdirSync,
   readFileSync as readFileSync2,
   realpathSync,
+  rmSync,
   statSync
 } from "node:fs";
 import { basename, delimiter, dirname as dirname2, join, resolve } from "node:path";
@@ -183,6 +184,7 @@ function writeJsonObjectSync(filePath, value, mode = 420) {
     fsync: true
   });
 }
+var isCaseInsensitivePlatform = process.platform === "win32" || process.platform === "darwin";
 
 // src/lifecycle/debug-launch.ts
 var DEBUG_PORT_FLAG = "--remote-debugging-port=0";
@@ -667,7 +669,7 @@ function applyDebugLaunch(enabled, options = {}) {
         driver.writeShortcuts(plan.updates);
         for (const created of state.createdFiles) {
           if (existsSync2(created)) {
-            rmSync(created, { force: true });
+            rmSync2(created, { force: true });
             removedTargets.push(created);
           }
         }
@@ -731,7 +733,7 @@ function applyDebugLaunch(enabled, options = {}) {
             writeFileSync2(userDesktop, backup.content, "utf8");
             patchedTargets.push(userDesktop);
           } else if (!backup.existed && existsSync2(userDesktop)) {
-            rmSync(userDesktop, { force: true });
+            rmSync2(userDesktop, { force: true });
             removedTargets.push(userDesktop);
           }
         } else if (existsSync2(userDesktop)) {
@@ -774,7 +776,7 @@ function applyDebugLaunch(enabled, options = {}) {
       } else {
         for (const created of [.../* @__PURE__ */ new Set([...state.createdFiles, cmdPath])]) {
           if (existsSync2(created)) {
-            rmSync(created, { force: true });
+            rmSync2(created, { force: true });
             removedTargets.push(created);
           }
         }

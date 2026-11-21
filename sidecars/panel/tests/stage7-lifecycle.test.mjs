@@ -460,3 +460,172 @@ test('ancestor symlinks like macOS /var do not trigger false symlink rejection w
   assert.equal(isReparseOrSymlink(evilLink), true);
   assert.throws(() => assertRegularTree(evilLink), /symlink or junction/);
 });
+
+test('manage.py IGNORED stays aligned with manifest.ts PACKAGER_IGNORED_NAMES', async () => {
+  const manifest = await import(pathToFileURL(join(ROOT, 'src', 'platform', 'manifest.ts')).href);
+  const pyExe = process.platform === 'win32' ? 'python' : 'python3';
+  const pyScript = [
+    'import importlib.util, json',
+    `spec = importlib.util.spec_from_file_location('mp', ${JSON.stringify(join(ROOT, 'manage.py'))})`,
+    'mod = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(mod)',
+    'print(json.dumps(sorted(mod.IGNORED)))',
+  ].join('\n');
+  const pyIgnored = JSON.parse(execFileSync(pyExe, ['-c', pyScript], { encoding: 'utf8' }));
+  assert.deepEqual(pyIgnored, [...manifest.PACKAGER_IGNORED_NAMES].sort());
+});
+
+test('installDesktop excludes tests & toolbar-preview, prunes stale files and stray lock, and preserves .data', async (t) => {
+  const { installDesktop } = await import(pathToFileURL(join(ROOT, 'src', 'lifecycle', 'installer.ts')).href);
+  const tmp = mkdtempSync(join(tmpdir(), 'ag-stage7-sync-prune-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const sourceRoot = join(tmp, 'source');
+  const home = join(tmp, 'home');
+  const testEnv = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    LOCALAPPDATA: join(home, 'AppData', 'Local'),
+    APPDATA: join(home, 'AppData', 'Roaming'),
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_DATA_HOME: join(home, '.local', 'share'),
+  };
+
+  mkdirSync(join(sourceRoot, 'assets'), { recursive: true });
+  mkdirSync(join(sourceRoot, 'compat'), { recursive: true });
+  mkdirSync(join(sourceRoot, 'sidecars', 'panel', 'tests'), { recursive: true });
+  mkdirSync(join(sourceRoot, 'sidecars', 'panel', '__pycache__'), { recursive: true });
+  mkdirSync(join(sourceRoot, '.data'), { recursive: true });
+
+  writeFileSync(join(sourceRoot, 'plugin.json'), JSON.stringify({ name: 'antigravity-pulse', version: '0.12.5' }) + '\n');
+  writeFileSync(join(sourceRoot, 'assets', 'logo.svg'), '<svg/>');
+  writeFileSync(join(sourceRoot, 'compat', 'runtime-ui.mjs'), '// runtime\n');
+  writeFileSync(join(sourceRoot, 'sidecars', 'panel', 'main.mjs'), '// panel v2\n');
+  writeFileSync(join(sourceRoot, 'sidecars', 'panel', 'pulse-accel.node'), 'native-addon');
+  writeFileSync(join(sourceRoot, 'sidecars', 'panel', 'toolbar-preview.html'), '<html>preview</html>');
+  writeFileSync(join(sourceRoot, 'sidecars', 'panel', 'tests', 'sample.test.mjs'), '// test\n');
+  writeFileSync(join(sourceRoot, 'sidecars', 'panel', '__pycache__', 'mod.pyc'), 'pyc');
+  writeFileSync(join(sourceRoot, '.data', 'usage-accounts.local.json'), '{"acct1":{"email":"a@example.test"}}\n');
+
+  const pluginDir = join(home, '.gemini', 'config', 'plugins', 'antigravity-pulse');
+  mkdirSync(join(pluginDir, 'sidecars', 'panel', 'tests'), { recursive: true });
+  mkdirSync(join(pluginDir, 'sidecars', 'panel', 'data'), { recursive: true });
+  mkdirSync(join(pluginDir, 'sidecars', 'panel', 'history-v1'), { recursive: true });
+  mkdirSync(join(pluginDir, '.data'), { recursive: true });
+  writeFileSync(join(pluginDir, 'plugin.json'), JSON.stringify({ name: 'antigravity-pulse', version: '0.12.4' }) + '\n');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'background-worker.mjs'), '// stale');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'usage-disk-worker.mjs'), '// stale');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'sidebar-preview.html'), '<html>stale</html>');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'toolbar-preview.html'), '<html>leaked</html>');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'tests', 'old.test.mjs'), '// leaked');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'data', 'legacy.json'), '{"keep":true}');
+  writeFileSync(join(pluginDir, 'sidecars', 'panel', 'history-v1', 'conv.json'), '{"keep":true}');
+  writeFileSync(join(pluginDir, '.data', 'custom-state.json'), '{"keep":true}');
+  writeFileSync(join(pluginDir, '.antigravity-pulse-update.lock'), '0');
+
+  installDesktop({ sourceRoot, home, env: testEnv, panelOnly: true, instance: 'pro' });
+
+  // Active runtime files & native addon are synced
+  assert.equal(readFileSync(join(pluginDir, 'sidecars', 'panel', 'main.mjs'), 'utf8'), '// panel v2\n');
+  assert.equal(readFileSync(join(pluginDir, 'sidecars', 'panel', 'pulse-accel.node'), 'utf8'), 'native-addon');
+  assert.equal(JSON.parse(readFileSync(join(pluginDir, 'plugin.json'), 'utf8')).version, '0.12.5');
+  assert.ok(existsSync(join(pluginDir, 'assets', 'logo.svg')));
+  assert.ok(existsSync(join(pluginDir, 'compat', 'runtime-ui.mjs')));
+
+  // Dev/test files, stale files, and stray inner lock are excluded/pruned
+  assert.equal(existsSync(join(pluginDir, 'sidecars', 'panel', 'tests')), false);
+  assert.equal(existsSync(join(pluginDir, 'sidecars', 'panel', 'toolbar-preview.html')), false);
+  assert.equal(existsSync(join(pluginDir, 'sidecars', 'panel', '__pycache__')), false);
+  assert.equal(existsSync(join(pluginDir, 'sidecars', 'panel', 'background-worker.mjs')), false);
+  assert.equal(existsSync(join(pluginDir, 'sidecars', 'panel', 'usage-disk-worker.mjs')), false);
+  assert.equal(existsSync(join(pluginDir, 'sidecars', 'panel', 'sidebar-preview.html')), false);
+  assert.equal(existsSync(join(pluginDir, '.antigravity-pulse-update.lock')), false);
+
+  // User .data state and legacy private runtime dirs are strictly preserved
+  assert.equal(readFileSync(join(pluginDir, '.data', 'custom-state.json'), 'utf8'), '{"keep":true}');
+  assert.equal(JSON.parse(readFileSync(join(pluginDir, '.data', 'usage-accounts.local.json'), 'utf8')).acct1.email, 'a@example.test');
+  assert.equal(readFileSync(join(pluginDir, 'sidecars', 'panel', 'data', 'legacy.json'), 'utf8'), '{"keep":true}');
+  assert.equal(readFileSync(join(pluginDir, 'sidecars', 'panel', 'history-v1', 'conv.json'), 'utf8'), '{"keep":true}');
+});
+
+test('copyTreeFilteredSync prune handles live/broken junctions and symlinks without touching external targets', async (t) => {
+  const { copyTreeFilteredSync, isReparseOrSymlink } = await import(
+    pathToFileURL(join(ROOT, 'src', 'lifecycle', 'fs-helpers.ts')).href
+  );
+  const tmp = mkdtempSync(join(tmpdir(), 'ag-stage7-link-prune-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  const src = join(tmp, 'src');
+  const dst = join(tmp, 'dst');
+  const external = join(tmp, 'external');
+  const externalForReplace = join(tmp, 'external-replace');
+  const brokenTarget = join(tmp, 'broken-target');
+
+  mkdirSync(join(src, 'sub'), { recursive: true });
+  writeFileSync(join(src, 'main.mjs'), '// real file\n');
+  writeFileSync(join(src, 'sub', 'item.mjs'), '// real sub\n');
+
+  mkdirSync(external, { recursive: true });
+  writeFileSync(join(external, 'secret.txt'), 'do-not-delete');
+  mkdirSync(externalForReplace, { recursive: true });
+  writeFileSync(join(externalForReplace, 'keep.txt'), 'still-intact');
+  mkdirSync(brokenTarget, { recursive: true });
+
+  mkdirSync(join(dst, 'stale-dir'), { recursive: true });
+  // 1. Live junction/dir-symlink at stale path and nested inside stale dir
+  symlinkSync(external, join(dst, 'stale-link'), linkType);
+  symlinkSync(external, join(dst, 'stale-dir', 'nested-link'), linkType);
+  // 2. Live junction/dir-symlink at expected directory path (`sub`)
+  symlinkSync(externalForReplace, join(dst, 'sub'), linkType);
+  // 3. Broken junction/dir-symlink at expected file path (`main.mjs`) and at stale path
+  symlinkSync(brokenTarget, join(dst, 'main.mjs'), linkType);
+  symlinkSync(brokenTarget, join(dst, 'broken-stale'), linkType);
+  rmSync(brokenTarget, { recursive: true, force: true });
+
+  // 4. Optional file symlink test (always runs on POSIX; runs on Windows when symlink privilege is available)
+  const externalFile = join(tmp, 'external-file.txt');
+  writeFileSync(externalFile, 'untouched-external-file');
+  let fileSymlinkCreated = false;
+  try {
+    writeFileSync(join(src, 'file-target.mjs'), '// fresh file\n');
+    symlinkSync(externalFile, join(dst, 'file-target.mjs'), 'file');
+    fileSymlinkCreated = true;
+  } catch {
+    rmSync(join(src, 'file-target.mjs'), { force: true });
+  }
+
+  // Also verify single-file copy replaces a broken link at destination
+  const singleSrc = join(tmp, 'plugin.json');
+  const singleDst = join(tmp, 'plugin-dst.json');
+  writeFileSync(singleSrc, '{"name":"antigravity-pulse"}\n');
+  const brokenSingle = join(tmp, 'broken-single-target');
+  mkdirSync(brokenSingle, { recursive: true });
+  symlinkSync(brokenSingle, singleDst, linkType);
+  rmSync(brokenSingle, { recursive: true, force: true });
+
+  copyTreeFilteredSync(src, dst, () => false, '', { prune: true });
+  copyTreeFilteredSync(singleSrc, singleDst, () => false, '', { prune: true });
+
+  assert.equal(readFileSync(join(dst, 'main.mjs'), 'utf8'), '// real file\n');
+  assert.equal(isReparseOrSymlink(join(dst, 'main.mjs')), false);
+  assert.equal(readFileSync(join(dst, 'sub', 'item.mjs'), 'utf8'), '// real sub\n');
+  assert.equal(isReparseOrSymlink(join(dst, 'sub')), false);
+  assert.equal(readFileSync(singleDst, 'utf8'), '{"name":"antigravity-pulse"}\n');
+  assert.equal(isReparseOrSymlink(singleDst), false);
+
+  assert.equal(existsSync(join(dst, 'stale-link')), false);
+  assert.equal(existsSync(join(dst, 'stale-dir')), false);
+  assert.equal(isReparseOrSymlink(join(dst, 'broken-stale')), false);
+
+  // External targets must be completely untouched
+  assert.equal(readFileSync(join(external, 'secret.txt'), 'utf8'), 'do-not-delete');
+  assert.equal(readFileSync(join(externalForReplace, 'keep.txt'), 'utf8'), 'still-intact');
+  assert.equal(existsSync(join(externalForReplace, 'item.mjs')), false);
+  if (fileSymlinkCreated) {
+    assert.equal(readFileSync(join(dst, 'file-target.mjs'), 'utf8'), '// fresh file\n');
+    assert.equal(isReparseOrSymlink(join(dst, 'file-target.mjs')), false);
+    assert.equal(readFileSync(externalFile, 'utf8'), 'untouched-external-file');
+  }
+});

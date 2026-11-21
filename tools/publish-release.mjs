@@ -236,6 +236,7 @@ import {
   readdirSync,
   readFileSync as readFileSync2,
   realpathSync,
+  rmSync,
   statSync
 } from "node:fs";
 import { basename, delimiter, dirname as dirname2, join, resolve } from "node:path";
@@ -306,6 +307,7 @@ function readJsonObjectSync(filePath, fallback = {}) {
   }
   return parsed;
 }
+var isCaseInsensitivePlatform = process.platform === "win32" || process.platform === "darwin";
 
 // src/lifecycle/packager.ts
 function sha256Hex(bytes) {

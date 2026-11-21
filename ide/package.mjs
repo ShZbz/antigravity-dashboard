@@ -235,6 +235,7 @@ import {
   readdirSync,
   readFileSync as readFileSync2,
   realpathSync,
+  rmSync,
   statSync
 } from "node:fs";
 import { basename, delimiter, dirname as dirname2, join, resolve } from "node:path";
@@ -305,6 +306,7 @@ function readJsonObjectSync(filePath, fallback = {}) {
   }
   return parsed;
 }
+var isCaseInsensitivePlatform = process.platform === "win32" || process.platform === "darwin";
 
 // src/lifecycle/packager.ts
 var VSIX_CONTENT_TYPES_XML = '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="json" ContentType="application/json"/><Default Extension="mjs" ContentType="text/javascript"/><Default Extension="cjs" ContentType="text/javascript"/><Default Extension="node" ContentType="application/octet-stream"/><Default Extension="py" ContentType="text/plain"/><Default Extension="md" ContentType="text/markdown"/><Default Extension="vsixmanifest" ContentType="text/xml"/><Override PartName="/extension/LICENSE" ContentType="text/plain"/></Types>';

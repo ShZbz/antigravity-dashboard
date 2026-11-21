@@ -313,7 +313,7 @@ export function createStackedBarController(
 
       const showX =
         state.period === 'day'
-          ? i % 3 === 0 || i === buckets.length - 1
+          ? buckets.length <= 31 || i % 3 === 0 || i === buckets.length - 1
           : state.period === 'custom'
             ? buckets.length > 31
               ? i % Math.ceil(buckets.length / 15) === 0 || i === buckets.length - 1
@@ -322,7 +322,9 @@ export function createStackedBarController(
       if (showX) {
         const xTxt =
           state.period === 'day'
-            ? String(i + 1)
+            ? buckets.length <= 31 && /^\d{4}-\d{2}-\d{2}$/.test(bucket.from)
+              ? String(Number(bucket.from.slice(8)))
+              : String(i + 1)
             : state.period === 'week'
               ? bucket.from.slice(5)
               : state.period === 'month'

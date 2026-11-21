@@ -211,7 +211,7 @@ import {
   mkdirSync as mkdirSync3,
   openSync as openSync2,
   readFileSync as readFileSync4,
-  rmSync,
+  rmSync as rmSync2,
   unlinkSync as unlinkSync2
 } from "node:fs";
 import { dirname as dirname4, join as join3, resolve as resolve2 } from "node:path";
@@ -223,6 +223,20 @@ var IDE_PACKAGE_NAME = "antigrative-dashboard-ide";
 var IDE_EXTENSION_ID = `${IDE_PUBLISHER}.${IDE_PACKAGE_NAME}`;
 var CLI_INSTALL_NAME = "antigrative-dashboard-cli";
 var DESKTOP_RUNTIME_ROOTS = ["assets", "compat", "sidecars", "plugin.json"];
+var DESKTOP_RUNTIME_EXCLUDED_DIRS = /* @__PURE__ */ new Set([
+  "tests"
+]);
+var DESKTOP_RUNTIME_EXCLUDED_REL_FILES = /* @__PURE__ */ new Set([
+  "sidecars/panel/toolbar-preview.html"
+]);
+var DESKTOP_RUNTIME_IGNORED_SUFFIXES = /* @__PURE__ */ new Set([
+  ".pyc",
+  ".log",
+  ".pdb",
+  ".exp",
+  ".lib",
+  ".exe"
+]);
 var PRIVATE_RUNTIME_DIRS = [
   "data",
   "history-v1",
@@ -425,6 +439,7 @@ import {
   readdirSync,
   readFileSync as readFileSync3,
   realpathSync as realpathSync2,
+  rmSync,
   statSync as statSync2
 } from "node:fs";
 import { basename as basename2, delimiter, dirname as dirname3, join as join2, resolve } from "node:path";
@@ -549,16 +564,21 @@ function atomicWriteFileSync(file, data, options = {}) {
 
 // src/lifecycle/fs-helpers.ts
 function isReparseOrSymlink(targetPath) {
+  const absPath = resolve(targetPath);
+  let lstat;
   try {
-    const absPath = resolve(targetPath);
-    const lstat = lstatSync(absPath);
-    if (lstat.isSymbolicLink()) return true;
-    const resolved = realpathSync2(absPath);
-    const parentResolved = realpathSync2(dirname3(absPath));
-    return resolved !== join2(parentResolved, basename2(absPath));
+    lstat = lstatSync(absPath);
   } catch (error) {
     const code = error?.code;
     return code !== "ENOENT";
+  }
+  if (lstat.isSymbolicLink()) return true;
+  try {
+    const resolved = realpathSync2(absPath);
+    const parentResolved = realpathSync2(dirname3(absPath));
+    return resolved !== join2(parentResolved, basename2(absPath));
+  } catch {
+    return true;
   }
 }
 function assertRegularTree(root) {
@@ -609,24 +629,75 @@ function copyFileIfChangedSync(src, dst) {
   }
   copyFileSync(src, dst);
 }
-function copyTreeFilteredSync(source, dest, shouldSkip, relPrefix = "") {
+var isCaseInsensitivePlatform = process.platform === "win32" || process.platform === "darwin";
+var entryCompareKey = (name) => isCaseInsensitivePlatform ? name.toLowerCase() : name;
+function lstatSafe(targetPath) {
+  try {
+    return lstatSync(targetPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function copyTreeFilteredSync(source, dest, shouldSkip, relPrefix = "", options) {
+  const prune = Boolean(options?.prune);
+  const shouldPreserve = options?.shouldPreserve;
   const st = statSync2(source);
   if (!st.isDirectory()) {
+    if (prune) {
+      const dstStat = lstatSafe(dest);
+      if (dstStat && (dstStat.isDirectory() || dstStat.isSymbolicLink() || isReparseOrSymlink(dest))) {
+        rmSync(dest, { recursive: true, force: true });
+      }
+    }
     mkdirSync2(dirname3(dest), { recursive: true });
     copyFileIfChangedSync(source, dest);
     return;
   }
+  if (prune) {
+    const dstStat = lstatSafe(dest);
+    if (dstStat && (!dstStat.isDirectory() || dstStat.isSymbolicLink() || isReparseOrSymlink(dest))) {
+      rmSync(dest, { recursive: true, force: true });
+    }
+  }
   mkdirSync2(dest, { recursive: true });
+  const expected = /* @__PURE__ */ new Map();
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
-    const isDir = entry.isDirectory();
-    if (shouldSkip(rel, entry.name, isDir)) continue;
     const srcChild = join2(source, entry.name);
+    const isDir = entry.isDirectory() && !entry.isSymbolicLink() && !isReparseOrSymlink(srcChild);
+    if (shouldSkip(rel, entry.name, isDir)) continue;
     const dstChild = join2(dest, entry.name);
     if (isDir) {
-      copyTreeFilteredSync(srcChild, dstChild, shouldSkip, rel);
-    } else if (entry.isFile()) {
+      expected.set(entryCompareKey(entry.name), "dir");
+      if (prune) {
+        const dstStat = lstatSafe(dstChild);
+        if (dstStat && (!dstStat.isDirectory() || dstStat.isSymbolicLink() || isReparseOrSymlink(dstChild))) {
+          rmSync(dstChild, { recursive: true, force: true });
+        }
+      }
+      copyTreeFilteredSync(srcChild, dstChild, shouldSkip, rel, options);
+    } else if (entry.isFile() && !entry.isSymbolicLink()) {
+      expected.set(entryCompareKey(entry.name), "file");
+      if (prune) {
+        const dstStat = lstatSafe(dstChild);
+        if (dstStat && (dstStat.isDirectory() || dstStat.isSymbolicLink() || isReparseOrSymlink(dstChild))) {
+          rmSync(dstChild, { recursive: true, force: true });
+        }
+      }
       copyFileIfChangedSync(srcChild, dstChild);
+    }
+  }
+  if (!prune) return;
+  for (const entry of readdirSync(dest, { withFileTypes: true })) {
+    const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    const childPath = join2(dest, entry.name);
+    const isLink = entry.isSymbolicLink() || isReparseOrSymlink(childPath);
+    const isDir = !isLink && entry.isDirectory();
+    if (shouldPreserve?.(rel, entry.name, isDir)) continue;
+    const expectedKind = expected.get(entryCompareKey(entry.name));
+    if (isLink || !expectedKind || expectedKind === "dir" !== isDir) {
+      rmSync(childPath, { recursive: true, force: true });
     }
   }
 }
@@ -847,9 +918,9 @@ function uninstallCli(home) {
       if (dirname4(resolved) !== resolve2(base) || resolved !== resolve2(join3(base, "antigrative-dashboard"))) {
         throw new Error("CLI removal target is outside its expected directory.");
       }
-      rmSync(resolved, { recursive: true, force: true });
+      rmSync2(resolved, { recursive: true, force: true });
     }
-    rmSync(backup, { force: true });
+    rmSync2(backup, { force: true });
   });
   console.log("CLI adapter removed; prior statusLine restored if still owned. Reopen agy.");
 }
@@ -881,7 +952,7 @@ import {
   readdirSync as readdirSync2,
   readFileSync as readFileSync5,
   readSync,
-  rmSync as rmSync2,
+  rmSync as rmSync3,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { mkdir as mkdir2, readdir, rm as rm2 } from "node:fs/promises";
@@ -1271,7 +1342,7 @@ function applyDebugLaunch(enabled, options = {}) {
         driver.writeShortcuts(plan.updates);
         for (const created of state.createdFiles) {
           if (existsSync4(created)) {
-            rmSync2(created, { force: true });
+            rmSync3(created, { force: true });
             removedTargets.push(created);
           }
         }
@@ -1335,7 +1406,7 @@ function applyDebugLaunch(enabled, options = {}) {
             writeFileSync2(userDesktop, backup.content, "utf8");
             patchedTargets.push(userDesktop);
           } else if (!backup.existed && existsSync4(userDesktop)) {
-            rmSync2(userDesktop, { force: true });
+            rmSync3(userDesktop, { force: true });
             removedTargets.push(userDesktop);
           }
         } else if (existsSync4(userDesktop)) {
@@ -1378,7 +1449,7 @@ function applyDebugLaunch(enabled, options = {}) {
       } else {
         for (const created of [.../* @__PURE__ */ new Set([...state.createdFiles, cmdPath])]) {
           if (existsSync4(created)) {
-            rmSync2(created, { force: true });
+            rmSync3(created, { force: true });
             removedTargets.push(created);
           }
         }
@@ -1436,11 +1507,12 @@ import { execFileSync as execFileSync3, spawn as spawn2 } from "node:child_proce
 import {
   copyFileSync as copyFileSync3,
   existsSync as existsSync6,
+  lstatSync as lstatSync2,
   mkdirSync as mkdirSync6,
   readdirSync as readdirSync4,
   readFileSync as readFileSync8,
   realpathSync as realpathSync3,
-  rmSync as rmSync3,
+  rmSync as rmSync4,
   statSync as statSync5
 } from "node:fs";
 import { dirname as dirname7, join as join6, resolve as resolve4 } from "node:path";
@@ -1617,6 +1689,20 @@ function restoreVerifiedLegacyAdapter(appAsarPath, backupsDir, { onRestoreErrorM
 }
 
 // src/lifecycle/installer.ts
+var PRIVATE_RUNTIME_DIR_SET = new Set(PRIVATE_RUNTIME_DIRS);
+function shouldSkipDesktopRuntimeEntry(relPath, entryName, isDir) {
+  if (isDir && DESKTOP_RUNTIME_EXCLUDED_DIRS.has(entryName)) return true;
+  if (!isDir && DESKTOP_RUNTIME_EXCLUDED_REL_FILES.has(relPath)) return true;
+  if (PACKAGER_IGNORED_NAMES.has(entryName)) return true;
+  const lower = entryName.toLowerCase();
+  for (const suffix of DESKTOP_RUNTIME_IGNORED_SUFFIXES) {
+    if (lower.endsWith(suffix)) return true;
+  }
+  return false;
+}
+function shouldPreserveDesktopRuntimeEntry(_relPath, entryName, isDir) {
+  return entryName === ".data" || isDir && PRIVATE_RUNTIME_DIR_SET.has(entryName);
+}
 function validateInstance(instance) {
   if (instance !== "all" && instance !== "pro" && instance !== "vertex") {
     throw new Error(`Invalid instance: ${instance}`);
@@ -1710,7 +1796,7 @@ function withLifecycleLock(pluginDir, fn) {
     }
     if (content === "0") {
       try {
-        rmSync3(lockPath);
+        rmSync4(lockPath);
       } catch {
         throw new Error("Another lifecycle operation is running");
       }
@@ -1753,7 +1839,7 @@ function removePluginDir(pluginDir, homeDir) {
   if (isReparseOrSymlink(geminiRoot) || isReparseOrSymlink(configRoot) || isReparseOrSymlink(expectedParent) || isReparseOrSymlink(pluginDir) || dirname7(resolved) !== expectedParent || resolved !== resolve4(join6(expectedParent, PLUGIN_NAME))) {
     throw new Error("Plugin target is outside the expected directory; refusing to delete it.");
   }
-  rmSync3(resolved, { recursive: true, force: true });
+  rmSync4(resolved, { recursive: true, force: true });
 }
 function installDesktop(options) {
   const instance = options.instance ?? "all";
@@ -1792,10 +1878,19 @@ function installDesktop(options) {
         const src = join6(options.sourceRoot, name);
         const dst = join6(dest, name);
         if (resolve4(src) === resolve4(dst)) continue;
-        copyTreeFilteredSync(src, dst, (_rel, entryName) => {
-          const lower = entryName.toLowerCase();
-          return PACKAGER_IGNORED_NAMES.has(entryName) || lower.endsWith(".pyc") || lower.endsWith(".log") || lower.endsWith(".pdb") || lower.endsWith(".exp") || lower.endsWith(".lib") || lower.endsWith(".exe");
+        copyTreeFilteredSync(src, dst, shouldSkipDesktopRuntimeEntry, name, {
+          prune: true,
+          shouldPreserve: shouldPreserveDesktopRuntimeEntry
         });
+      }
+      if (resolve4(options.sourceRoot) !== resolve4(dest)) {
+        const strayLock = join6(dest, ".antigravity-pulse-update.lock");
+        if (existsSync6(strayLock) && !isReparseOrSymlink(strayLock) && lstatSync2(strayLock).isFile()) {
+          try {
+            rmSync4(strayLock, { force: true });
+          } catch {
+          }
+        }
       }
       if (existsSync6(localAccounts) && statSync5(localAccounts).isFile()) {
         const targetAccounts = join6(dest, ".data", "usage-accounts.local.json");
@@ -2248,7 +2343,7 @@ import {
   mkdirSync as mkdirSync8,
   readdirSync as readdirSync6,
   readFileSync as readFileSync10,
-  rmSync as rmSync4,
+  rmSync as rmSync5,
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync6
 } from "node:fs";
@@ -2498,7 +2593,7 @@ function pruneStaleDestinationFiles(destRoot, expectedSet, absDir, relPrefix) {
       pruneStaleDestinationFiles(destRoot, expectedSet, absChild, relPosix);
       try {
         if (readdirSync6(absChild).length === 0) {
-          rmSync4(absChild, { recursive: true, force: true });
+          rmSync5(absChild, { recursive: true, force: true });
         }
       } catch {
       }
@@ -2587,7 +2682,7 @@ function removePycacheDirs(dir) {
     const full = join9(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "__pycache__") {
-        rmSync4(full, { recursive: true, force: true });
+        rmSync5(full, { recursive: true, force: true });
       } else {
         removePycacheDirs(full);
       }
