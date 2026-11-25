@@ -6,9 +6,11 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { atomicWriteFileSync, readJsonSyncSafe } from '../shared/atomic-fs.ts';
 
@@ -83,6 +85,58 @@ export function writeJsonObjectSync(filePath: string, value: unknown, mode = 0o6
   });
 }
 
+function isBusyCopyError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
+  return code === 'EBUSY' || code === 'EPERM';
+}
+
+export interface LockedReplaceOps {
+  platform?: string;
+  tempDir?: string;
+  copyFile?: (src: string, dst: string) => void;
+  rename?: (oldPath: string, newPath: string) => void;
+}
+
+export function displaceLockedFileSync(
+  dst: string,
+  {
+    tempDir = tmpdir(),
+    rename = renameSync,
+  }: Pick<LockedReplaceOps, 'tempDir' | 'rename'> = {},
+): string {
+  const stamp = `${process.pid}-${Date.now()}`;
+  const tmpTarget = join(tempDir, `ag-pulse-locked-${stamp}-${basename(dst)}`);
+  try {
+    rename(dst, tmpTarget);
+    return tmpTarget;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
+    if (code !== 'EXDEV') throw error;
+  }
+  const fallbackTarget = `${dst}.old.${stamp}`;
+  rename(dst, fallbackTarget);
+  return fallbackTarget;
+}
+
+export function copyFileWithLockedNodeFallbackSync(
+  src: string,
+  dst: string,
+  ops: LockedReplaceOps = {},
+): void {
+  const platform = ops.platform ?? process.platform;
+  const copyFile = ops.copyFile ?? copyFileSync;
+  try {
+    copyFile(src, dst);
+  } catch (error) {
+    if (platform === 'win32' && dst.toLowerCase().endsWith('.node') && isBusyCopyError(error)) {
+      displaceLockedFileSync(dst, ops);
+      copyFile(src, dst);
+      return;
+    }
+    throw error;
+  }
+}
+
 function copyFileIfChangedSync(src: string, dst: string): void {
   if (existsSync(dst)) {
     try {
@@ -97,7 +151,7 @@ function copyFileIfChangedSync(src: string, dst: string): void {
       // Fall through to normal copy when stat/read check cannot confirm identical contents.
     }
   }
-  copyFileSync(src, dst);
+  copyFileWithLockedNodeFallbackSync(src, dst);
 }
 
 export interface CopyTreeOptions {
@@ -188,7 +242,13 @@ export function copyTreeFilteredSync(
     if (shouldPreserve?.(rel, entry.name, isDir)) continue;
     const expectedKind = expected.get(entryCompareKey(entry.name));
     if (isLink || !expectedKind || (expectedKind === 'dir') !== isDir) {
-      rmSync(childPath, { recursive: true, force: true });
+      try {
+        rmSync(childPath, { recursive: true, force: true });
+      } catch (error) {
+        if (!(process.platform === 'win32' && /\.node\.old\./i.test(entry.name) && isBusyCopyError(error))) {
+          throw error;
+        }
+      }
     }
   }
 }

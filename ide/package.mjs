@@ -235,9 +235,11 @@ import {
   readdirSync,
   readFileSync as readFileSync2,
   realpathSync,
+  renameSync as renameSync2,
   rmSync,
   statSync
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname as dirname2, join, resolve } from "node:path";
 
 // src/shared/atomic-fs.ts

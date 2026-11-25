@@ -94,6 +94,10 @@ const CLI_STATUSLINE_TARGETS = [
   { entry: 'src/lifecycle/cli-statusline/statusline.ts', out: 'cli/statusline.mjs', shebang: true },
 ];
 
+const MCP_TARGETS = [
+  { entry: 'src/mcp/server.ts', out: 'mcp/server.mjs' },
+];
+
 const LIFECYCLE_CLI_TARGETS = [
   { entry: 'src/lifecycle/manage-cli.ts', out: 'manage.mjs', shebang: true },
   { entry: 'src/lifecycle/ide-package-cli.ts', out: 'ide/package.mjs', shebang: true },
@@ -107,6 +111,7 @@ const ALL_ESM_TARGETS = [
   ...CROSS_TARGET_NODE_ESM_TARGETS,
   ...PANEL_TARGETS,
   ...CLI_STATUSLINE_TARGETS,
+  ...MCP_TARGETS,
 ];
 
 const EXTERNAL_TARGET_MAP = new Map(
@@ -394,6 +399,65 @@ async function compilePanelWebviewTargets() {
   ];
 }
 
+const MCP_APP_MAX_BYTES = 1024 * 1024;
+
+function validateMcpAppHtml(outPath, htmlText) {
+  const byteLength = Buffer.byteLength(htmlText, 'utf8');
+  if (byteLength === 0) {
+    throw new Error(`${outPath} is empty`);
+  }
+  if (byteLength >= MCP_APP_MAX_BYTES) {
+    throw new Error(`${outPath} exceeds 1 MiB limit (${byteLength} bytes)`);
+  }
+  if (/<script\b[^>]*\bsrc\s*=/i.test(htmlText)) {
+    throw new Error(`${outPath} must not contain external <script src=...> tags`);
+  }
+  if (/<link\b[^>]*\bhref\s*=/i.test(htmlText)) {
+    throw new Error(`${outPath} must not contain external <link href=...> tags`);
+  }
+}
+
+async function compileMcpUsageAppTarget() {
+  const { build } = await getEsbuild();
+  const result = await build({
+    entryPoints: [resolve(ROOT, 'src/ui/mcp-usage-app/index.ts')],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2023',
+    minify: true,
+    loader: { '.css': 'text' },
+    write: false,
+    logLevel: 'silent',
+  });
+  if (result.outputFiles.length !== 1) {
+    throw new Error('Expected single output for mcp/apps/usage.html');
+  }
+  const jsText = result.outputFiles[0].text;
+  new Script(jsText, { filename: 'mcp/apps/usage.html#script' });
+  const safeScript = jsText.replace(/<\/script/gi, '<\\/script');
+  const htmlText = [
+    '<!doctype html>',
+    '<html lang="en">',
+    '<head>',
+    '  <meta charset="utf-8">',
+    '  <meta name="viewport" content="width=device-width,initial-scale=1">',
+    '  <title>Token Usage — Antigrative Dashboard</title>',
+    '  <style>',
+    '    html,body,#mcp-usage-root{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:var(--color-background-primary,var(--pulse-background,#18191c));color:var(--color-text-primary,var(--pulse-foreground,#f4f4f5));font-family:var(--font-sans,system-ui,sans-serif);}',
+    '  </style>',
+    '</head>',
+    '<body>',
+    '  <div id="mcp-usage-root"></div>',
+    `  <script>${safeScript}</script>`,
+    '</body>',
+    '</html>',
+    '',
+  ].join('\n');
+  validateMcpAppHtml('mcp/apps/usage.html', htmlText);
+  return { out: 'mcp/apps/usage.html', text: htmlText };
+}
+
 async function loadTsManifest() {
   const { build } = await getEsbuild();
   const result = await build({
@@ -490,7 +554,7 @@ async function verifyManifestDependencyGraph(compiled) {
   // 3. Desktop runtime root containment check
   const desktopRoots = new Set(manifest.DESKTOP_RUNTIME_ROOTS);
   const desktopReachable = await traceReachableWorkspaceFiles(
-    ['compat/inline-widget.cjs', 'compat/runtime-ui.mjs', 'sidecars/panel/main.mjs'],
+    ['compat/inline-widget.cjs', 'compat/runtime-ui.mjs', 'sidecars/panel/main.mjs', 'mcp/server.mjs'],
     compiledMap,
   );
   for (const file of desktopReachable) {
@@ -498,6 +562,9 @@ async function verifyManifestDependencyGraph(compiled) {
     if (!desktopRoots.has(topLevel)) {
       throw new Error(`Manifest mismatch: desktop runtime module "${file}" falls outside DESKTOP_RUNTIME_ROOTS`);
     }
+  }
+  if (!desktopRoots.has('mcp') || !desktopRoots.has('mcp_config.json')) {
+    throw new Error('Manifest mismatch: DESKTOP_RUNTIME_ROOTS must include "mcp" and "mcp_config.json"');
   }
   return manifest;
 }
@@ -722,11 +789,13 @@ async function run() {
     ...CROSS_TARGET_NODE_ESM_TARGETS.map((target) => compileNodeEsmTarget(target, { allowCrossTargets: true })),
     ...PANEL_TARGETS.map((target) => compileNodeEsmTarget(target, { allowCrossTargets: true })),
     ...CLI_STATUSLINE_TARGETS.map((target) => compileNodeEsmTarget(target, { allowCrossTargets: true })),
+    ...MCP_TARGETS.map((target) => compileNodeEsmTarget(target, { allowCrossTargets: true })),
     ...LIFECYCLE_CLI_TARGETS.map((target) => compileNodeEsmTarget(target)),
     ...NODE_CJS_TARGETS.map((target) => compileNodeCjsTarget(target)),
     ...CJS_FACTORY_TARGETS.map((target) => compileCjsFactoryTarget(target)),
     compilePanelFormatTarget(),
     compilePanelWebviewTargets(),
+    compileMcpUsageAppTarget(),
   ]);
   const compiled = compiledBundles.flat();
   const manifest = await verifyManifestDependencyGraph(compiled);

@@ -54,6 +54,9 @@ var RELEASE_NATIVE_ALLOWED_FILES = /* @__PURE__ */ new Set([
   ...RELEASE_NATIVE_CLI_BINS
 ]);
 var RELEASE_ZIP_REQUIRED_FILES = [
+  "mcp_config.json",
+  "mcp/server.mjs",
+  "mcp/apps/usage.html",
   "ide/package.json",
   "ide/manage.mjs",
   "ide/manage.py",
@@ -236,9 +239,11 @@ import {
   readdirSync,
   readFileSync as readFileSync2,
   realpathSync,
+  renameSync as renameSync2,
   rmSync,
   statSync
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname as dirname2, join, resolve } from "node:path";
 
 // src/shared/atomic-fs.ts

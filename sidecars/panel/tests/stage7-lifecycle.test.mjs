@@ -629,3 +629,73 @@ test('copyTreeFilteredSync prune handles live/broken junctions and symlinks with
     assert.equal(readFileSync(externalFile, 'utf8'), 'untouched-external-file');
   }
 });
+
+test('copyFileWithLockedNodeFallbackSync displaces locked Windows .node to tmpdir (with EXDEV fallback)', async (t) => {
+  const { copyFileWithLockedNodeFallbackSync } = await import(
+    pathToFileURL(join(ROOT, 'src', 'lifecycle', 'fs-helpers.ts')).href
+  );
+  const tmp = mkdtempSync(join(tmpdir(), 'ag-stage7-locked-node-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const src = join(tmp, 'src.node');
+  const dst = join(tmp, 'pulse-accel.node');
+  const parkDir = join(tmp, 'park');
+  mkdirSync(parkDir, { recursive: true });
+  writeFileSync(src, 'new-binary');
+  writeFileSync(dst, 'locked-binary');
+
+  let attempts = 0;
+  copyFileWithLockedNodeFallbackSync(src, dst, {
+    platform: 'win32',
+    tempDir: parkDir,
+    copyFile(s, d) {
+      attempts += 1;
+      if (attempts === 1) {
+        const err = new Error('EBUSY');
+        err.code = 'EBUSY';
+        throw err;
+      }
+      writeFileSync(d, readFileSync(s));
+    },
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(readFileSync(dst, 'utf8'), 'new-binary');
+  const parked = readdirSync(parkDir);
+  assert.equal(parked.length, 1);
+  assert.match(parked[0], /^ag-pulse-locked-.*-pulse-accel\.node$/);
+  assert.equal(readFileSync(join(parkDir, parked[0]), 'utf8'), 'locked-binary');
+  assert.equal(readdirSync(tmp).filter((name) => name.includes('.old.')).length, 0);
+
+  // Verify EXDEV fallback renames beside dst when tmpDir is on another device
+  const dst2 = join(tmp, 'pulse-accel-2.node');
+  writeFileSync(dst2, 'locked-binary-2');
+  let attempts2 = 0;
+  let renameCalls = 0;
+  copyFileWithLockedNodeFallbackSync(src, dst2, {
+    platform: 'win32',
+    tempDir: parkDir,
+    copyFile(s, d) {
+      attempts2 += 1;
+      if (attempts2 === 1) {
+        const err = new Error('EPERM');
+        err.code = 'EPERM';
+        throw err;
+      }
+      writeFileSync(d, readFileSync(s));
+    },
+    rename(oldPath, newPath) {
+      renameCalls += 1;
+      if (renameCalls === 1) {
+        const err = new Error('EXDEV');
+        err.code = 'EXDEV';
+        throw err;
+      }
+      writeFileSync(newPath, readFileSync(oldPath));
+      rmSync(oldPath);
+    },
+  });
+  assert.equal(attempts2, 2);
+  assert.equal(readFileSync(dst2, 'utf8'), 'new-binary');
+  assert.equal(readdirSync(tmp).filter((name) => name.startsWith('pulse-accel-2.node.old.')).length, 1);
+});

@@ -21,10 +21,13 @@ export interface UsageDashboardLanguage {
   readonly language: LanguageCode;
 }
 
+export type UsageDisplayMode = 'modal' | 'fullpage';
+
 export interface UsageDashboardOptions {
   root: ShadowRoot;
   language: UsageDashboardLanguage;
   setMarkup: (element: Element | ShadowRoot, markup: string) => void;
+  displayMode?: UsageDisplayMode;
   hostLabel?: string;
   guideDismissed?: boolean;
   initialPreferences?: Partial<PreferencesSnapshot> | null;

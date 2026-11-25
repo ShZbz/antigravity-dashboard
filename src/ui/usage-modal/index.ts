@@ -318,6 +318,7 @@ export default function createUsageDashboard(options: UsageDashboardOptions): Us
       render();
     },
     restoreModal() {
+      if (options.displayMode === 'fullpage') return;
       if (!state.disposed && dialog.open && dialog.isConnected && !dialog.matches(':popover-open')) {
         heatmap.closeYear(false);
         focusTrap.present();

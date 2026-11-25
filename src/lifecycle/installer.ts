@@ -312,6 +312,7 @@ export function installDesktop(options: InstallDesktopOptions): void {
         const src = join(options.sourceRoot, name);
         const dst = join(dest, name);
         if (resolve(src) === resolve(dst)) continue;
+        if (!existsSync(src) && (name === 'mcp' || name === 'mcp_config.json')) continue;
         copyTreeFilteredSync(src, dst, shouldSkipDesktopRuntimeEntry, name, {
           prune: true,
           shouldPreserve: shouldPreserveDesktopRuntimeEntry,

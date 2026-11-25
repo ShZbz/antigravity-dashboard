@@ -1,7 +1,12 @@
 {
   "name": "antigravity-pulse",
-  "display_name": "Antigrative Dashboard",
-  "description": "Token throughput, cache hit, context window and quotas on Windows, Linux and macOS. English / Chinese switching.",
-  "version": "0.12.6",
-  "logo": "assets/logo.svg"
+  "displayName": "Antigrative Dashboard",
+  "description": "Token throughput, cache hit, context window, quotas, and full-page Token Usage dashboard on Windows, Linux and macOS. English / Chinese switching.",
+  "version": "0.12.7",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Open the Token Usage dashboard",
+    "Show my token usage breakdown by model and project this month",
+    "Check my remaining Antigravity quotas and current session speed"
+  ]
 }

@@ -7,9 +7,9 @@
 模型选择旁常驻显示生成速率、缓存命中与上下文占用；悬停上下文，一并查看上下文、5 小时和周额度详情。<br>
 缩略信息常驻；鼠标悬停或打开侧边栏，展开完整多维监控。
 
-[![Version 0.12.6](https://img.shields.io/badge/version-0.12.6-91adff?style=flat-square&labelColor=252936)](CHANGELOG.md)
+[![Version 0.12.7](https://img.shields.io/badge/version-0.12.7-91adff?style=flat-square&labelColor=252936)](CHANGELOG.md)
 [![Platforms](https://img.shields.io/badge/host-Windows%20%7C%20Linux%20%7C%20macOS-83d8b9?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
-[![Antigravity 2.21.1 - 2.34.0](https://img.shields.io/badge/Antigravity-2.21.1%20--%202.34.0-c5a0ff?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
+[![Antigravity 2.21.1 - 2.35.1](https://img.shields.io/badge/Antigravity-2.21.1%20--%202.35.1-c5a0ff?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
 [![MIT](https://img.shields.io/badge/license-MIT-d4d9e6?style=flat-square&labelColor=252936)](LICENSE)
 
 [看看效果](#看看效果) · [IDE](#antigravity-ide) · [CLI](#antigravity-cli-状态栏) · [开始安装](#安装) · [启用与停用](#可插拔) · [兼容性](#兼容性) · [常见问题](#常见问题) · [English](README.md)
@@ -21,6 +21,8 @@
 
 > [!IMPORTANT]
 > **`v0.12.0` Rust 原生引擎提示与回退说明：** `v0.12.0` 正式引入 **Rust 原生加速引擎（`pulse-accel`）**，通过 SQLite 本地直读旁路、二进制用量索引、堆外结构化 Diff 与文本脱敏等底层加速大幅提升界面响应速度，并显著缓解早期版本长时间运行或大账本场景下内存占用过高的问题。由于新引擎刚全量上线，如您在使用过程中遇到任何异常、数据偏差或兼容性问题，欢迎及时前往 [GitHub Issues](https://github.com/ShZbz/antigravity-dashboard/issues) 反馈；如需临时关闭原生加速，可设置环境变量 `PULSE_DISABLE_NATIVE_ACCEL=1` 无缝切换回纯 TypeScript 模式，若问题暂时无法容忍亦可先回退至 **`v0.11.0`** 版本。
+
+**v0.12.7 更新：** 正式接入 **Antigravity `v2.34.0+` MCP Apps** — 无需开启 CDP 调试端口，直接从左侧导航栏 **Plugins → Token Usage** 打开原生全宽全页 Token 用量大盘（实时跟随宿主主题并复用现有本地账本与 Rust 原生引擎）；新增按需零运行时依赖 stdio MCP Server（`mcp/server.mjs`）、自包含单文件页面（`mcp/apps/usage.html`）与跨端只读 Agent 查询工具（`query_usage_stats`、`get_quota_and_session`），同步规范 `plugin.json` 通过 `agy plugin validate --strict` 校验，并加固 Windows 运行中覆盖更新锁定 `pulse-accel.node` 时的自动 rename-swap 替换逻辑。
 
 **v0.12.6 更新：** 修复 Token 用量详情弹窗悬停 Tooltip 严重偏移问题——将 `#tip` 升级为顶层 `popover="manual"` 以消除 `#usage-dashboard` 打开态 `scale: 1` 导致的 `position: fixed` 包含块偏移与裁切，柱状图 Tooltip 改为锚定实际 `.stack` 柱体并支持底部回退，同时在日视图展示全部 `1..30/31` 日期刻度；同步增强安装器在覆盖更新时自动清理过期运行时文件的能力。
 
@@ -93,7 +95,7 @@
 ## Antigravity IDE
 
 **v0.7.0+** 提供反重力独立 IDE 的专用 VSIX 适配。从发布页下载
-`antigrative-dashboard-ide-0.12.6.vsix`，在 IDE 扩展页选择「从 VSIX 安装」，无需先装桌面 App。
+`antigrative-dashboard-ide-0.12.7.vsix`，在 IDE 扩展页选择「从 VSIX 安装」，无需先装桌面 App。
 
 完全退出 IDE 后，使用带
 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1`

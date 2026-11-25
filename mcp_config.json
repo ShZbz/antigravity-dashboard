@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pulse": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/mcp/server.mjs"]
+    }
+  }
+}

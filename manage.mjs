@@ -222,7 +222,7 @@ var IDE_PUBLISHER = "shzbz";
 var IDE_PACKAGE_NAME = "antigrative-dashboard-ide";
 var IDE_EXTENSION_ID = `${IDE_PUBLISHER}.${IDE_PACKAGE_NAME}`;
 var CLI_INSTALL_NAME = "antigrative-dashboard-cli";
-var DESKTOP_RUNTIME_ROOTS = ["assets", "compat", "sidecars", "plugin.json"];
+var DESKTOP_RUNTIME_ROOTS = ["assets", "compat", "mcp", "sidecars", "mcp_config.json", "plugin.json"];
 var DESKTOP_RUNTIME_EXCLUDED_DIRS = /* @__PURE__ */ new Set([
   "tests"
 ]);
@@ -338,7 +338,9 @@ var CLI_RUNTIME_FILES = [
 ];
 var DIST_RELEASE_FILES = [
   "plugin.json",
+  "mcp_config.json",
   "assets",
+  "mcp",
   "sidecars",
   "compat",
   "cli",
@@ -439,9 +441,11 @@ import {
   readdirSync,
   readFileSync as readFileSync3,
   realpathSync as realpathSync2,
+  renameSync as renameSync2,
   rmSync,
   statSync as statSync2
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename as basename2, delimiter, dirname as dirname3, join as join2, resolve } from "node:path";
 
 // src/shared/atomic-fs.ts
@@ -614,6 +618,41 @@ function writeJsonObjectSync(filePath, value, mode = 420) {
     fsync: true
   });
 }
+function isBusyCopyError(error) {
+  const code = error?.code;
+  return code === "EBUSY" || code === "EPERM";
+}
+function displaceLockedFileSync(dst, {
+  tempDir = tmpdir(),
+  rename: rename2 = renameSync2
+} = {}) {
+  const stamp = `${process.pid}-${Date.now()}`;
+  const tmpTarget = join2(tempDir, `ag-pulse-locked-${stamp}-${basename2(dst)}`);
+  try {
+    rename2(dst, tmpTarget);
+    return tmpTarget;
+  } catch (error) {
+    const code = error?.code;
+    if (code !== "EXDEV") throw error;
+  }
+  const fallbackTarget = `${dst}.old.${stamp}`;
+  rename2(dst, fallbackTarget);
+  return fallbackTarget;
+}
+function copyFileWithLockedNodeFallbackSync(src, dst, ops = {}) {
+  const platform = ops.platform ?? process.platform;
+  const copyFile = ops.copyFile ?? copyFileSync;
+  try {
+    copyFile(src, dst);
+  } catch (error) {
+    if (platform === "win32" && dst.toLowerCase().endsWith(".node") && isBusyCopyError(error)) {
+      displaceLockedFileSync(dst, ops);
+      copyFile(src, dst);
+      return;
+    }
+    throw error;
+  }
+}
 function copyFileIfChangedSync(src, dst) {
   if (existsSync2(dst)) {
     try {
@@ -627,7 +666,7 @@ function copyFileIfChangedSync(src, dst) {
     } catch {
     }
   }
-  copyFileSync(src, dst);
+  copyFileWithLockedNodeFallbackSync(src, dst);
 }
 var isCaseInsensitivePlatform = process.platform === "win32" || process.platform === "darwin";
 var entryCompareKey = (name) => isCaseInsensitivePlatform ? name.toLowerCase() : name;
@@ -697,7 +736,13 @@ function copyTreeFilteredSync(source, dest, shouldSkip, relPrefix = "", options)
     if (shouldPreserve?.(rel, entry.name, isDir)) continue;
     const expectedKind = expected.get(entryCompareKey(entry.name));
     if (isLink || !expectedKind || expectedKind === "dir" !== isDir) {
-      rmSync(childPath, { recursive: true, force: true });
+      try {
+        rmSync(childPath, { recursive: true, force: true });
+      } catch (error) {
+        if (!(process.platform === "win32" && /\.node\.old\./i.test(entry.name) && isBusyCopyError(error))) {
+          throw error;
+        }
+      }
     }
   }
 }
@@ -1878,6 +1923,7 @@ function installDesktop(options) {
         const src = join6(options.sourceRoot, name);
         const dst = join6(dest, name);
         if (resolve4(src) === resolve4(dst)) continue;
+        if (!existsSync6(src) && (name === "mcp" || name === "mcp_config.json")) continue;
         copyTreeFilteredSync(src, dst, shouldSkipDesktopRuntimeEntry, name, {
           prune: true,
           shouldPreserve: shouldPreserveDesktopRuntimeEntry

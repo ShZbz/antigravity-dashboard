@@ -24,8 +24,8 @@ CONFIG = HOME / '.gemini' / 'config' / 'config.json'
 SETTINGS = _paths['settings']
 APP = _paths['app']
 BACKUPS = _paths['backups']
-RUNTIME_FILES = ('assets', 'compat', 'sidecars', 'plugin.json')
-DIST_FILES = ('plugin.json', 'assets', 'sidecars', 'compat', 'cli', 'ide', 'manage.mjs', 'manage.py', 'install.ps1',
+RUNTIME_FILES = ('assets', 'compat', 'mcp', 'sidecars', 'mcp_config.json', 'plugin.json')
+DIST_FILES = ('plugin.json', 'mcp_config.json', 'assets', 'mcp', 'sidecars', 'compat', 'cli', 'ide', 'manage.mjs', 'manage.py', 'install.ps1',
               'uninstall.ps1', 'install.sh', 'uninstall.sh', 'README.md', 'LICENSE', 'CHANGELOG.md', 'COMPATIBILITY.md', 'docs', 'package.json',
               '.gitignore', '.gitattributes', '.github', 'tests', 'tools', 'GITHUB_RELEASE.md', 'README.zh-CN.md')
 PRIVATE_RUNTIME_DIRS = frozenset({'data', 'history-v1', 'usage-v1', 'timeline-v1', 'sdk'})
@@ -372,6 +372,8 @@ def install(panel_only=False, legacy_loader=False, instance='all'):
         dest.mkdir(parents=True, exist_ok=True)
         for name in RUNTIME_FILES:
             source, target = SOURCE / name, dest / name
+            if not source.exists() and name in ('mcp', 'mcp_config.json'):
+                continue
             if source.resolve() == target.resolve():
                 continue
             _sync_runtime_tree(source, target, name)

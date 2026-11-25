@@ -18,6 +18,12 @@ const BACKDROP_STYLE =
 const DIALOG_STYLE =
   'box-sizing:border-box;overflow:hidden;visibility:visible;padding:0;border:1px solid var(--pulse-border);background:var(--pulse-background);color:var(--pulse-foreground);box-shadow:0 24px 100px #0006';
 
+const FULLPAGE_HOST_STYLE =
+  '#usage-dashboard[data-display-mode="fullpage"]{position:static;display:block;width:100%;max-width:none;height:100%;max-height:none;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:var(--pulse-background);color:var(--pulse-foreground);overflow:hidden;opacity:1;pointer-events:auto}';
+
+const FULLPAGE_DIALOG_STYLE =
+  'box-sizing:border-box;overflow:hidden;visibility:visible;padding:0;border:0;background:var(--pulse-background);color:var(--pulse-foreground);box-shadow:none';
+
 const PAGE_MARKUP =
   '<header class="top"><div><div class="eyebrow">ANTIGRATIVE DASHBOARD</div><h1 id="title"></h1><div class="sub"><span class="live-dot"></span><span id="subtitle"></span></div></div><div class="top-controls"><div class="actions"><button id="locale" type="button" aria-label="Language"><span id="locale-label" class="locale-label">中</span></button><button id="refresh" type="button" aria-label="Refresh"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 7a5 5 0 1 0-1.3 4.4M13 3v4H9"/></svg></button><button id="font-settings" type="button" class="font-trigger" aria-label="Font size settings"><span>Aa</span></button><button id="close" type="button" aria-label="Close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div><button id="add-manual" type="button" class="btn-manual" aria-label="Add manual usage"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg><span id="add-manual-label">录入远程用量</span></button></div></header><div class="tabs-bar"><nav class="tabs" role="tablist"><button id="overview-tab" role="tab" aria-controls="overview"></button><button id="details-tab" role="tab" aria-controls="details"></button></nav><span id="account-switcher-slot"></span></div><div class="totals" id="totals"></div><section id="usage-waiting" class="usage-waiting" role="status" hidden></section><section id="overview" role="tabpanel"><div class="section-head"><div><h2 id="activity-title"></h2><div class="muted" id="heat-sub"></div></div><div class="chart-controls"><div class="seg" id="heat-controls"><button data-heat="day"></button><button data-heat="week"></button></div><div class="year-picker"><button id="year" type="button" class="year-trigger" aria-label="Year" aria-haspopup="listbox" aria-controls="year-menu" aria-expanded="false"><span id="year-label"></span><svg class="year-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="year-menu" class="year-menu" role="listbox" aria-label="Year" popover="manual"></div></div></div></div><div class="heat-wrap"><div class="calendar"><div class="months" id="months"></div><div class="heat-row"><div class="weekdays" id="weekdays"></div><div class="heat" id="heat"></div></div></div></div><div class="heat-footer"><span id="heat-summary"></span><div class="scale"><span id="less"></span><i class="swatch"></i><i class="swatch" data-level="1"></i><i class="swatch" data-level="2"></i><i class="swatch" data-level="3"></i><i class="swatch" data-level="4"></i><span id="more"></span></div></div><div class="selected"><div><div class="title" id="selection-title"></div><span class="muted" id="selection-value"></span></div><button id="selection-details"></button></div></section><section id="details" role="tabpanel" hidden><div class="section-head"><div class="detail-heading-group"><div class="detail-picker-row"><div class="picker" id="dim-picker"><button id="dim-trigger" type="button" class="picker-trigger" aria-haspopup="listbox" aria-controls="dim-menu" aria-expanded="false"><span id="dim-label"></span><svg class="picker-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="dim-menu" class="picker-menu" role="listbox" popover="manual"></div></div><div class="picker" id="model-view-picker"><button id="model-view-trigger" type="button" class="picker-trigger" aria-haspopup="listbox" aria-controls="model-view-menu" aria-expanded="false"><span id="model-view-label"></span><svg class="picker-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="model-view-menu" class="picker-menu" role="listbox" popover="manual"></div></div><span id="project-scope-note" class="project-scope-note" hidden></span></div><div id="detail-summary-row" class="detail-summary-row"></div></div><div class="chart-controls"><div class="range"><button id="previous" aria-label="Previous">‹</button><strong id="range-label"></strong><button id="next" aria-label="Next">›</button></div><div id="custom-range-controls" class="custom-range-controls" hidden></div><div class="seg" id="period-controls"><button data-period="day"></button><button data-period="week"></button><button data-period="month"></button><button data-period="custom"></button></div></div></div><div class="legend" id="legend"></div><div class="chart-wrap"><div class="chart"><div class="axis" id="axis"></div><div class="plot" id="plot"></div></div></div><div class="hourly-section" id="hourly-section"><div class="hourly-header"><button id="hourly-toggle" type="button" class="hourly-toggle" aria-expanded="false"><span id="hourly-toggle-title"></span><span id="hourly-title"></span><span id="hourly-subtitle" class="muted"></span><svg class="hourly-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div class="hourly-mode-seg" id="hourly-mode-controls"><button id="hourly-mode-combined" type="button" data-hourly-mode="combined"></button><button id="hourly-mode-today" type="button" data-hourly-mode="today"></button></div></div><div id="hourly-content" class="hourly-content" hidden><div class="hourly-chart-wrap" id="hourly-chart"></div></div></div><section class="project-detail-section" id="project-detail-section" hidden></section><div class="table-wrap"><table class="table"><thead><tr id="table-head"></tr></thead><tbody id="table-body"></tbody></table></div><div class="manual-section" id="manual-section"><div class="section-head"><h2 id="manual-title"></h2></div><div class="table-wrap"><table class="table" id="manual-table"><thead><tr id="manual-table-head"></tr></thead><tbody id="manual-table-body"></tbody></table></div></div></section><div id="manual-modal" class="modal-layer" hidden></div><div class="alert" id="alert" hidden></div><footer class="footer"><span id="coverage"></span><span id="timezone"></span></footer><div class="tip" id="tip" role="status" popover="manual" hidden></div>';
 
@@ -55,12 +61,17 @@ export interface UsageShellElements {
 
 export function mountUsageDomShell(options: UsageDashboardOptions, state: UsageModalState): UsageShellElements {
   const { root, language, setMarkup } = options;
+  const isFullpage = options.displayMode === 'fullpage';
   const dialog = document.createElement('dialog');
   dialog.id = 'usage-dashboard';
-  dialog.setAttribute('popover', 'manual');
-  dialog.setAttribute('aria-modal', 'true');
+  if (isFullpage) {
+    dialog.dataset.displayMode = 'fullpage';
+  } else {
+    dialog.setAttribute('popover', 'manual');
+    dialog.setAttribute('aria-modal', 'true');
+  }
   dialog.setAttribute('aria-label', language.language === 'zh-CN' ? '用量统计' : 'Token usage');
-  dialog.style.cssText = DIALOG_STYLE;
+  dialog.style.cssText = isFullpage ? FULLPAGE_DIALOG_STYLE : DIALOG_STYLE;
 
   const shell = document.createElement('div');
   const view = shell.attachShadow({ mode: 'open' });
@@ -69,7 +80,7 @@ export function mountUsageDomShell(options: UsageDashboardOptions, state: UsageM
   root.append(dialog);
 
   const backdrop = document.createElement('style');
-  backdrop.textContent = BACKDROP_STYLE;
+  backdrop.textContent = isFullpage ? FULLPAGE_HOST_STYLE : BACKDROP_STYLE;
   root.append(backdrop);
 
   const css = document.createElement('style');
@@ -79,7 +90,12 @@ export function mountUsageDomShell(options: UsageDashboardOptions, state: UsageM
 
   const page = document.createElement('div');
   page.className = 'page';
+  if (isFullpage) page.dataset.displayMode = 'fullpage';
   setMarkup(page, PAGE_MARKUP);
+  if (isFullpage) {
+    const closeBtn = page.querySelector<HTMLButtonElement>('#close');
+    if (closeBtn) closeBtn.hidden = true;
+  }
   view.append(page);
 
   const accSelect = el('select', { id: 'account-switcher', class: 'account-switcher', 'aria-label': 'Account', hidden: true });

@@ -97,7 +97,7 @@ test('packager includes tagged cross-platform native binaries while excluding un
   const tmp = mkdtempSync(join(tmpdir(), 'ag-stage8c-pkg-'));
   try {
     for (const rel of manifest.DIST_RELEASE_FILES) {
-      if (['plugin.json', 'manage.mjs', 'manage.py', 'install.ps1', 'uninstall.ps1', 'install.sh', 'uninstall.sh', 'README.md', 'LICENSE', 'CHANGELOG.md', 'COMPATIBILITY.md', 'package.json', '.gitignore', '.gitattributes', 'GITHUB_RELEASE.md', 'README.zh-CN.md'].includes(rel)) {
+      if (['plugin.json', 'mcp_config.json', 'manage.mjs', 'manage.py', 'install.ps1', 'uninstall.ps1', 'install.sh', 'uninstall.sh', 'README.md', 'LICENSE', 'CHANGELOG.md', 'COMPATIBILITY.md', 'package.json', '.gitignore', '.gitattributes', 'GITHUB_RELEASE.md', 'README.zh-CN.md'].includes(rel)) {
         writeFileSync(join(tmp, rel), rel === 'plugin.json' ? '{"name":"antigravity-pulse","version":"0.0.1-test"}\n' : 'ok\n');
       } else {
         mkdirSync(join(tmp, rel), { recursive: true });
