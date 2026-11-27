@@ -120,6 +120,28 @@ export interface LedgerProjectSummariesResult {
   files: LedgerProjectFileSummary[];
 }
 
+export interface LedgerSharedProjectQuery {
+  directory: string;
+  scope: string;
+  timeZone: string;
+  fixedOffsetSecs?: number | null;
+  tzMinMs?: number | null;
+  tzMaxMs?: number | null;
+  tzTransitions?: LedgerTzTransition[] | null;
+  zeroAtDate: string;
+  knownAccounts: Record<string, unknown>;
+  fallbackScope?: string | null;
+  targetHashes?: string[] | null;
+  dirtyRelPaths?: string[];
+}
+
+export interface ReleaseNativeCachesResult {
+  released: boolean;
+  mode: 'soft' | 'full';
+  ledgerCleared: boolean;
+  projectCleared: boolean;
+}
+
 export interface SanitizerPatternInput {
   pattern: string;
   flags?: string;
@@ -170,6 +192,8 @@ interface PulseAccelAddon {
   diffSessionSnapshotsJson?: (inputsJson: string) => string | null;
   queryUsageLedgerSummaryJson?: (queryJson: string) => string | null;
   readLedgerProjectSummariesJson?: (queryJson: string) => string | null;
+  readLedgerSharedProjectSummariesJson?: (queryJson: string) => string | null;
+  releaseNativeCachesJson?: (mode: string) => string | null;
   auditOpenSourcePrivacyJson?: (optionsJson: string) => string | null;
   syncAndAuditOpenSourceJson?: (optionsJson: string) => string | null;
   rotateLogTailJson?: (logPath: string, maxBytes: number, keepLines: number) => string | null;
@@ -400,6 +424,7 @@ type SingleJsonAddonMethod =
   | 'diffSessionSnapshotsJson'
   | 'queryUsageLedgerSummaryJson'
   | 'readLedgerProjectSummariesJson'
+  | 'readLedgerSharedProjectSummariesJson'
   | 'auditOpenSourcePrivacyJson'
   | 'syncAndAuditOpenSourceJson';
 
@@ -461,6 +486,57 @@ export function readLedgerProjectSummaries(
     payload,
     (parsed) => Array.isArray(parsed.files),
   );
+}
+
+/**
+ * Deduplicates and summarizes multi-scope shared ledger files directly in Rust
+ * (`PROJECT_MEM_CACHE`), returning `null` if unavailable or on fallback.
+ */
+export function readLedgerSharedProjectSummaries(
+  query: LedgerSharedProjectQuery,
+): LedgerProjectSummariesResult | null {
+  if (!query?.directory || !query?.scope || !query?.zeroAtDate) return null;
+  const payload: LedgerSharedProjectQuery = {
+    ...query,
+    knownAccounts: query.knownAccounts ?? {},
+    dirtyRelPaths: query.dirtyRelPaths ?? [],
+  };
+  return callSingleJsonAddon<LedgerProjectSummariesResult>(
+    'readLedgerSharedProjectSummariesJson',
+    payload,
+    (parsed) => Array.isArray(parsed.files),
+  );
+}
+
+/**
+ * Releases Rust in-memory ledger and project caches (`'soft'` keeps ledger snapshot + file
+ * stamps for < 1 ms unchanged reads; `'full'` clears all native caches).
+ */
+export function releaseNativeCaches(
+  mode: 'soft' | 'full',
+): ReleaseNativeCachesResult | null {
+  if (mode !== 'soft' && mode !== 'full') return null;
+  const addon = getAddon();
+  const fn = addon?.releaseNativeCachesJson;
+  if (typeof fn !== 'function') return null;
+  try {
+    const json = fn(mode);
+    if (typeof json !== 'string' || !json) return null;
+    const parsed = JSON.parse(json) as Partial<ReleaseNativeCachesResult> | null;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.released !== 'boolean' ||
+      (parsed.mode !== 'soft' && parsed.mode !== 'full') ||
+      typeof parsed.ledgerCleared !== 'boolean' ||
+      typeof parsed.projectCleared !== 'boolean'
+    ) {
+      return null;
+    }
+    return parsed as ReleaseNativeCachesResult;
+  } catch {
+    return null;
+  }
 }
 
 /**

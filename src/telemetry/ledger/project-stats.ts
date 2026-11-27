@@ -14,6 +14,7 @@ import type {
 import {
   isNativeAccelAvailable,
   readLedgerProjectSummaries,
+  readLedgerSharedProjectSummaries,
   readSqliteConversationSummaries,
   type LedgerProjectDayBucket,
   type LedgerProjectFileSummary,
@@ -1181,7 +1182,7 @@ async function loadSharedFileSummariesJs(params: {
     }
   }
 
-  const readResults = await mapPool(tasks, 16, async (task) => {
+  const readResults = await mapPool(tasks, 4, async (task) => {
     const res = await readValidatedLedgerDoc(ledger, task.scope, task.filePath);
     if (!res.transientError) {
       ledger.projectDirtyRelPaths.delete(`${task.scope}/${task.fileHash}.json`);
@@ -1304,6 +1305,78 @@ async function loadSharedFileSummariesJs(params: {
     );
   }
   return summaries;
+}
+
+function tryReadNativeSharedSummaries(params: {
+  ledger: UsageLedger;
+  queryScope: string;
+  scanScopes: readonly string[];
+  scopesByHash: ReadonlyMap<string, readonly string[]>;
+  targetHashes: ReadonlySet<string>;
+  timeZone: string;
+  zeroAtDate: string;
+}): LedgerProjectFileSummary[] | null {
+  const { ledger, queryScope, scanScopes, scopesByHash, targetHashes, timeZone, zeroAtDate } = params;
+  if (ledger.hasCustomFs || !isNativeAccelAvailable()) return null;
+  if (targetHashes.size === 0) return [];
+  const sortedHashes = [...targetHashes].sort();
+  const dirtySnapshot = [...ledger.projectDirtyRelPaths];
+  const tzSpec = resolveTimeZoneSpec(timeZone, Date.now());
+  const res = readLedgerSharedProjectSummaries({
+    directory: ledger.directory,
+    scope: queryScope,
+    timeZone,
+    ...tzSpec,
+    zeroAtDate,
+    knownAccounts: ledger.knownAccounts || {},
+    fallbackScope: ledger.scope ?? null,
+    targetHashes: sortedHashes,
+    dirtyRelPaths: dirtySnapshot,
+  });
+  if (!res) return null;
+  if (dirtySnapshot.length > 0) {
+    const dirtySet = new Set(dirtySnapshot);
+    for (const s of scanScopes) {
+      for (const fileHash of sortedHashes) {
+        if (scopesByHash.get(fileHash)?.includes(s)) {
+          const rel = `${s}/${fileHash}.json`;
+          if (dirtySet.has(rel)) {
+            ledger.projectDirtyRelPaths.delete(rel);
+          }
+        }
+      }
+    }
+  }
+  return res.files;
+}
+
+async function loadSharedFileSummaries(params: {
+  ledger: UsageLedger;
+  queryScope: string;
+  targetSet: ReadonlySet<string>;
+  scanScopes: readonly string[];
+  scopesByHash: ReadonlyMap<string, readonly string[]>;
+  targetHashes: ReadonlySet<string>;
+  ownerByHash: ReadonlyMap<string, string>;
+  timeZone: string;
+  zeroAtDate: string;
+}): Promise<LedgerProjectFileSummary[]> {
+  const nativeShared = tryReadNativeSharedSummaries({
+    ledger: params.ledger,
+    queryScope: params.queryScope,
+    scanScopes: params.scanScopes,
+    scopesByHash: params.scopesByHash,
+    targetHashes: params.targetHashes,
+    timeZone: params.timeZone,
+    zeroAtDate: params.zeroAtDate,
+  });
+  if (nativeShared) return nativeShared;
+  const accountsMeta = await params.ledger.accountsMeta().catch(() => ({}));
+  return await loadSharedFileSummariesJs({
+    ...params,
+    meta: accountsMeta,
+    knownAccounts: params.ledger.knownAccounts || {},
+  });
 }
 
 function resolveProjectForSummary(
@@ -1498,8 +1571,7 @@ export async function queryProjectUsageOverview(
   }
 
   if (targetSharedHashes.size > 0) {
-    const accountsMeta = await opts.ledger.accountsMeta().catch(() => ({}));
-    const sharedSummaries = await loadSharedFileSummariesJs({
+    const sharedSummaries = await loadSharedFileSummaries({
       ledger: opts.ledger,
       queryScope: scope,
       targetSet: plan.targetSet,
@@ -1507,8 +1579,6 @@ export async function queryProjectUsageOverview(
       scopesByHash: plan.scopesByHash,
       targetHashes: targetSharedHashes,
       ownerByHash,
-      meta: accountsMeta,
-      knownAccounts: opts.ledger.knownAccounts || {},
       timeZone,
       zeroAtDate,
     });
@@ -1705,8 +1775,7 @@ export async function queryProjectConversationDetail(
   }
 
   if (targetSharedHashes.size > 0) {
-    const accountsMeta = await opts.ledger.accountsMeta().catch(() => ({}));
-    const sharedSummaries = await loadSharedFileSummariesJs({
+    const sharedSummaries = await loadSharedFileSummaries({
       ledger: opts.ledger,
       queryScope: scope,
       targetSet: plan.targetSet,
@@ -1714,8 +1783,6 @@ export async function queryProjectConversationDetail(
       scopesByHash: plan.scopesByHash,
       targetHashes: targetSharedHashes,
       ownerByHash,
-      meta: accountsMeta,
-      knownAccounts: opts.ledger.knownAccounts || {},
       timeZone,
       zeroAtDate,
     });

@@ -1,4 +1,5 @@
 import { setImmediate as yieldToLiveRequests } from 'node:timers/promises';
+import type { UsageTotalsSnapshot } from '../../contracts/metrics.ts';
 import type {
   DesktopUsageSyncStatus,
   ManualUsageInput,
@@ -25,6 +26,7 @@ import {
 import { sha256 } from './helpers.ts';
 import { persistProjectMetaFromRawSummaries } from './project-stats.ts';
 import { UsageLedger } from './summary.ts';
+import { dateKey } from './timezone.ts';
 import { HASH_RE, type BackfillEntry, type BackfillHost, type UsageAccountsResult } from './types.ts';
 
 export type {
@@ -73,6 +75,13 @@ export class DesktopUsage {
   continuation: ReturnType<typeof setTimeout> | null = null;
   pending: Promise<void> | null = null;
   lastPersistedRawSummaries: Record<string, unknown> | null = null;
+  totalsCache: {
+    revision: number;
+    today: string;
+    scope: string;
+    timeZone: string;
+    value: UsageTotalsSnapshot;
+  } | null = null;
 
   constructor(
     store: DesktopUsageStore,
@@ -350,8 +359,8 @@ export class DesktopUsage {
     return { current, completed: true, missing: missing + this.passFailures.size, confirmed, retrying: missing + this.passFailures.size - confirmed, more };
   }
 
-  async snapshot(): Promise<UsageSummarySnapshot | null> {
-    const targetScope = this.viewScope || 'all';
+  private prepareSyncAndScope(scopeOverride?: string): string | null {
+    const targetScope = scopeOverride || this.viewScope || 'all';
     if (!targetScope && !this.store?.identity) return null;
     if (this.store?.identity && (this.scope !== this.store.identity || this.scopeEpoch !== this.store.epoch)) {
       this.lastSync = 0;
@@ -362,9 +371,59 @@ export class DesktopUsage {
       if (this.pending) this.forceQueued = true;
     }
     if (this.store?.identity && this.now() - this.lastSync > 60000 && !this.continuation) void this.sync();
-    const scope = targetScope;
+    return targetScope;
+  }
+
+  async totalsSnapshot(scope?: string, now: number = Date.now()): Promise<UsageTotalsSnapshot | null> {
+    const effectiveScope = this.prepareSyncAndScope(scope);
+    if (!effectiveScope || (!HASH_RE.test(effectiveScope) && effectiveScope !== 'all')) return null;
+    const today = dateKey(now, this.ledger.timeZone);
+    const startRevision = this.ledger.revision;
+    const cached = this.totalsCache;
+    if (
+      cached &&
+      cached.revision === startRevision &&
+      cached.today === today &&
+      cached.scope === effectiveScope &&
+      cached.timeZone === this.ledger.timeZone
+    ) {
+      return cached.value;
+    }
+    this.ledger.touchUsageActivity?.(Date.now());
+    const value = await this.ledger.summary(effectiveScope, now);
+    if (!value) return null;
+    const totals: UsageTotalsSnapshot = {
+      todayTokens: value.todayTokens,
+      monthTokens: value.monthTokens,
+    };
+    if (this.ledger.revision === startRevision) {
+      this.totalsCache = {
+        revision: startRevision,
+        today,
+        scope: effectiveScope,
+        timeZone: value.timeZone || this.ledger.timeZone,
+        value: totals,
+      };
+    }
+    return totals;
+  }
+
+  async snapshot(): Promise<UsageSummarySnapshot | null> {
+    const scope = this.prepareSyncAndScope();
+    if (!scope) return null;
+    this.ledger.touchUsageActivity?.(Date.now());
+    const startRevision = this.ledger.revision;
     const [value, accounts] = await Promise.all([this.ledger.summary(scope), this.ledger.getAccounts(scope)]);
-        return value
+    if (value && this.ledger.revision === startRevision) {
+      this.totalsCache = {
+        revision: startRevision,
+        today: value.today,
+        scope,
+        timeZone: value.timeZone || this.ledger.timeZone,
+        value: { todayTokens: value.todayTokens, monthTokens: value.monthTokens },
+      };
+    }
+    return value
       ? {
           ...value,
           viewScope: scope,
@@ -384,7 +443,10 @@ export class DesktopUsage {
 
   async addManualUsage(scope: string, data?: ManualUsageInput): Promise<ManualUsageRecord> { return await this.ledger.addManualUsage(scope, data); }
   async deleteManualUsage(scope: string, id: string): Promise<boolean> { return await this.ledger.deleteManualUsage(scope, id); }
-  async getAccounts(): Promise<UsageAccountsResult> { return await this.ledger.getAccounts(this.viewScope || 'all'); }
+  async getAccounts(): Promise<UsageAccountsResult> {
+    this.ledger.touchUsageActivity?.(Date.now());
+    return await this.ledger.getAccounts(this.viewScope || 'all');
+  }
 
   async getRecordingAccountState(): Promise<{
     active: string | null;
@@ -392,6 +454,7 @@ export class DesktopUsage {
     localMode: boolean;
     accounts: UsageAccountsResult;
   }> {
+    this.ledger.touchUsageActivity?.(Date.now());
     const [selected, accounts] = await Promise.all([
       this.ledger.getActiveLocalAccount(),
       this.ledger.getAccounts(this.store?.identity || null),
@@ -480,6 +543,7 @@ export class DesktopUsage {
   dispose(): void {
     this.disposed = true;
     this.forceQueued = false;
+    this.totalsCache = null;
     if (this.continuation !== null) clearTimeout(this.continuation);
     this.continuation = null;
   }

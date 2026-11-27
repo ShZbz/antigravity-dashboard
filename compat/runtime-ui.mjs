@@ -237,7 +237,11 @@ function validatedInput(value) {
   if (input.conversationId != null && !GUID_RE.test(input.conversationId)) {
     throw new Error("Invalid conversation ID");
   }
-  return { conversationId: input.conversationId || null, force: input.force === true };
+  return {
+    conversationId: input.conversationId || null,
+    force: input.force === true,
+    ...typeof input.includeUsage === "boolean" ? { includeUsage: input.includeUsage } : {}
+  };
 }
 async function discoverTargets(profile) {
   const { targets } = await discoverDevToolsTargets(profile, { mode: "desktop" });
@@ -414,6 +418,12 @@ function offlineSnapshot(message) {
     groups: [],
     serverTime: (/* @__PURE__ */ new Date()).toISOString()
   };
+}
+var MAX_BRIDGE_RESULT_BYTES = 1048576;
+function exceedsBridgeLimit(jsonText) {
+  if (jsonText.length > MAX_BRIDGE_RESULT_BYTES) return true;
+  if (jsonText.length <= Math.floor(MAX_BRIDGE_RESULT_BYTES / 3)) return false;
+  return Buffer.byteLength(jsonText, "utf8") > MAX_BRIDGE_RESULT_BYTES;
 }
 async function dispatchBindingCall(host, connection, input) {
   let result = {};
@@ -592,10 +602,12 @@ async function dispatchBindingCall(host, connection, input) {
   } else {
     return { handled: false };
   }
-  if (JSON.stringify(result).length > 1048576) {
+  let serializedResult = JSON.stringify(result) ?? "null";
+  if (exceedsBridgeLimit(serializedResult)) {
     result = offlineSnapshot("Metrics response too large");
+    serializedResult = JSON.stringify(result);
   }
-  return { handled: true, result };
+  return { handled: true, result, serializedResult };
 }
 function formatBindingError(type, error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -677,9 +689,10 @@ async function handleCdpEvent(ctx, connection, message) {
     const outcome = await dispatchBindingCall(ctx, connection, input);
     if (!outcome.handled) return;
     if (ctx.stopping || !await ctx.owns()) return;
+    const serialized = outcome.serializedResult ?? JSON.stringify(outcome.result);
     await connection.command("Runtime.evaluate", {
       expression: ctx.rendererGuard(
-        "window.__agPulseRuntimeBridge?.resolve(" + input.id + "," + JSON.stringify(outcome.result) + ")"
+        "window.__agPulseRuntimeBridge?.resolve(" + input.id + "," + serialized + ")"
       ),
       contextId
     });
@@ -701,6 +714,9 @@ async function handleCdpEvent(ctx, connection, message) {
 }
 
 // src/ui/runtime-ui/session-lifecycle.ts
+function buildGuardedSource(source, origin) {
+  return "if (location.origin === " + JSON.stringify(origin) + ") {" + source + "}";
+}
 async function attachTargetSession(ctx, target) {
   const wsUrl = target.webSocketDebuggerUrl ?? "";
   const connection = ctx.connect(wsUrl, {
@@ -722,8 +738,12 @@ async function attachTargetSession(ctx, target) {
     await connection.command("Page.enable");
     await connection.command("Runtime.enable");
     await connection.command("Runtime.addBinding", { name: ctx.binding });
-    const guardedSource = "if (location.origin === " + JSON.stringify(connection.origin) + ") {" + ctx.source + "}";
-    connection.guardedSource = guardedSource;
+    const guardedSource = buildGuardedSource(ctx.source, connection.origin);
+    Object.defineProperty(connection, "guardedSource", {
+      configurable: true,
+      enumerable: false,
+      get: () => buildGuardedSource(ctx.source, connection.origin)
+    });
     const added = await connection.command("Page.addScriptToEvaluateOnNewDocument", {
       source: guardedSource
     });
@@ -780,7 +800,7 @@ async function verifyTargetSession(ctx, connection) {
   if (status && (!status.installed || !status.bridge)) {
     if (!await ctx.owns()) return false;
     const recovery = await connection.command("Runtime.evaluate", {
-      expression: connection.guardedSource
+      expression: buildGuardedSource(ctx.source, connection.origin)
     });
     if (recovery.exceptionDetails) throw new Error("Widget recovery failed");
   }
@@ -841,6 +861,10 @@ var RuntimeUi = class {
   getProjectUsage;
   getProjectDetail;
   clearTimeline;
+  now;
+  healthWriteThrottleMs;
+  lastHealthWriteKey = null;
+  lastHealthWriteAt = 0;
   constructor({
     snapshot,
     source = "",
@@ -855,6 +879,8 @@ var RuntimeUi = class {
     targetOrigin = (target) => new URL(target.url ?? "").origin,
     connect = (url, options) => new CdpConnection(url, options),
     interval = 3e3,
+    now = Date.now,
+    healthWriteThrottleMs = 6e4,
     addManualUsage = null,
     deleteManualUsage = null,
     getAccounts = null,
@@ -875,6 +901,8 @@ var RuntimeUi = class {
     this.discover = discover;
     this.connect = connect;
     this.interval = interval;
+    this.now = now;
+    this.healthWriteThrottleMs = healthWriteThrottleMs;
     this.sessions = /* @__PURE__ */ new Map();
     this.running = false;
     this.stopping = false;
@@ -918,20 +946,34 @@ var RuntimeUi = class {
       rendererGuard: (expression) => this.rendererGuard(expression)
     };
   }
-  async setHealth(state, message) {
+  async setHealth(state, message, forceWrite = false) {
+    const now = this.now();
     this.health = {
       state,
       mode: "runtime",
       message,
       windows: this.sessions.size,
-      checkedAt: (/* @__PURE__ */ new Date()).toISOString()
+      checkedAt: new Date(now).toISOString()
     };
-    if (this.dataDir && await this.owns()) {
-      try {
-        await mkdir(this.dataDir, { recursive: true });
-        await writeFile(join3(this.dataDir, "integration-state.json"), JSON.stringify(this.health));
-      } catch {
-      }
+    if (!this.dataDir || !await this.owns()) return;
+    const writeKey = JSON.stringify([
+      this.health.state,
+      this.health.mode,
+      this.health.message,
+      this.health.windows,
+      this.health.activePortPresent ?? null,
+      this.health.debugLaunchEnabled ?? null,
+      this.health.debugLaunchConfigured ?? null
+    ]);
+    const changed = writeKey !== this.lastHealthWriteKey;
+    const elapsed = now - this.lastHealthWriteAt >= this.healthWriteThrottleMs;
+    if (!forceWrite && !changed && !elapsed) return;
+    try {
+      await mkdir(this.dataDir, { recursive: true });
+      await writeFile(join3(this.dataDir, "integration-state.json"), JSON.stringify(this.health));
+      this.lastHealthWriteKey = writeKey;
+      this.lastHealthWriteAt = now;
+    } catch {
     }
   }
   async event(connection, message) {
@@ -1053,6 +1095,7 @@ var RuntimeUi = class {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
     await this.detachAll();
+    await this.setHealth(this.health.state, this.health.message, true);
   }
 };
 export {

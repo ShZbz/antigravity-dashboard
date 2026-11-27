@@ -19,25 +19,55 @@ import type {
   UsageBucketCounts,
   UsageSummarySnapshot,
 } from '../contracts/index.ts';
-import { platformPaths, type PlatformPaths } from '../platform/paths.ts';
-import { PreferencesStore } from '../platform/preferences-store.ts';
+import type { PlatformPaths } from '../platform/paths.ts';
+import type { PreferencesStore } from '../platform/preferences-store.ts';
 import { compact, countdown, count, percent, rate, resetDate } from '../shared/format.ts';
-import {
-  DesktopUsage,
-  UsageLedger,
-  dateKey,
-  queryProjectConversationDetail,
-  queryProjectUsageOverview,
-  weekStart,
-} from '../telemetry/ledger/index.ts';
-import { defaultConversationsDir } from '../telemetry/reader/local-conversations.ts';
-import { MetricsStore } from '../telemetry/store/index.ts';
-import { readHostTheme } from '../ui/theme/host-theme.ts';
+import type { DesktopUsage, DesktopUsageStore, UsageLedger } from '../telemetry/ledger/index.ts';
+import type { MetricsStore } from '../telemetry/store/index.ts';
 import type { McpCallToolResult, McpToolDefinition } from './protocol.ts';
 
 export const USAGE_APP_RESOURCE_URI = 'ui://antigravity-pulse/usage.html';
 export const USAGE_APP_MIME_TYPE = 'text/html;profile=mcp-app';
 export const INITIAL_PAYLOAD_MAX_BYTES = 768 * 1024;
+export const DEFAULT_IDLE_DISPOSE_MS = 90_000;
+
+type PathsModule = typeof import('../platform/paths.ts');
+type PreferencesModule = typeof import('../platform/preferences-store.ts');
+type LedgerModule = typeof import('../telemetry/ledger/index.ts');
+type LocalConversationsModule = typeof import('../telemetry/reader/local-conversations.ts');
+type StoreModule = typeof import('../telemetry/store/index.ts');
+type HostThemeModule = typeof import('../ui/theme/host-theme.ts');
+type NativeBridgeModule = typeof import('../platform/native-bridge.ts');
+
+let pathsModPromise: Promise<PathsModule> | null = null;
+let prefsModPromise: Promise<PreferencesModule> | null = null;
+let ledgerModPromise: Promise<LedgerModule> | null = null;
+let localConvModPromise: Promise<LocalConversationsModule> | null = null;
+let storeModPromise: Promise<StoreModule> | null = null;
+let themeModPromise: Promise<HostThemeModule> | null = null;
+let nativeBridgeModPromise: Promise<NativeBridgeModule> | null = null;
+
+function loadPathsModule(): Promise<PathsModule> {
+  return (pathsModPromise ??= import('../platform/paths.ts'));
+}
+function loadPreferencesModule(): Promise<PreferencesModule> {
+  return (prefsModPromise ??= import('../platform/preferences-store.ts'));
+}
+function loadLedgerModule(): Promise<LedgerModule> {
+  return (ledgerModPromise ??= import('../telemetry/ledger/index.ts'));
+}
+function loadLocalConversationsModule(): Promise<LocalConversationsModule> {
+  return (localConvModPromise ??= import('../telemetry/reader/local-conversations.ts'));
+}
+function loadStoreModule(): Promise<StoreModule> {
+  return (storeModPromise ??= import('../telemetry/store/index.ts'));
+}
+function loadThemeModule(): Promise<HostThemeModule> {
+  return (themeModPromise ??= import('../ui/theme/host-theme.ts'));
+}
+function loadNativeBridgeModule(): Promise<NativeBridgeModule> {
+  return (nativeBridgeModPromise ??= import('../platform/native-bridge.ts'));
+}
 
 const SCOPE_HASH = /^[a-f0-9]{64}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -66,6 +96,7 @@ export interface PulseMcpBackendOptions {
   readTheme?: () => Promise<HostThemeConfig>;
   profileDir?: string;
   now?: () => number;
+  idleDisposeMs?: number | null;
 }
 
 export interface PulseMcpBackend {
@@ -275,6 +306,7 @@ function emptyBucket(): UsageBucketCounts {
 function resolveDateRange(
   today: string,
   period: 'today' | 'week' | 'month' | 'custom',
+  weekStartFn: (date: string) => string,
   fromArg?: string,
   toArg?: string,
 ): { from: string; to: string } {
@@ -284,7 +316,7 @@ function resolveDateRange(
   let to = toArg || today;
   if (!fromArg) {
     if (period === 'today') from = today;
-    else if (period === 'week') from = weekStart(today);
+    else if (period === 'week') from = weekStartFn(today);
     else if (period === 'month') from = `${today.slice(0, 7)}-01`;
   }
   if (from > to) throw new Error(`Invalid date range: 'from' (${from}) is after 'to' (${to})`);
@@ -356,70 +388,163 @@ function errAction(error: unknown): McpCallToolResult {
 
 export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): PulseMcpBackend {
   const nowFn = options.now ?? Date.now;
+  const idleDisposeMs =
+    options.idleDisposeMs === undefined
+      ? DEFAULT_IDLE_DISPOSE_MS
+      : options.idleDisposeMs === null
+        ? 0
+        : Number.isFinite(options.idleDisposeMs) && options.idleDisposeMs > 0
+          ? options.idleDisposeMs
+          : 0;
+  const allDoublesInjected = Boolean(options.ledger && options.store && options.usage);
+
   let pathsCache: PlatformPaths | null = options.paths ?? null;
   let ledgerCache: UsageLedger | null = options.ledger ?? null;
   let prefsCache: PreferencesStore | null = options.preferences ?? null;
   let storeCache: MetricsStore | null = options.store ?? null;
   let usageCache: DesktopUsage | null = options.usage ?? null;
   let identityResolver: ((recent: readonly string[]) => Promise<string | null>) | null = null;
+  let nativeBridgeMod: NativeBridgeModule | null = null;
 
-  const getPaths = (): PlatformPaths => {
-    if (!pathsCache) pathsCache = platformPaths();
+  let disposed = false;
+  let hasActivatedBackend = false;
+  let inFlightCalls = 0;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let teardownPromise: Promise<void> | null = null;
+
+  const currentViewScope = (): string =>
+    usageCache?.viewScope ?? options.usage?.viewScope ?? 'all';
+
+  const usageStoreAdapter: DesktopUsageStore & {
+    localFallbackActive?: boolean;
+    rawSummaries?: Record<string, unknown> | null;
+    setLocalIdentity?: (next: string | null) => boolean;
+  } = {
+    get identity() {
+      return storeCache?.identity ?? null;
+    },
+    get epoch() {
+      return storeCache?.epoch ?? 0;
+    },
+    get usagePersistenceError() {
+      return storeCache?.usagePersistenceError === true;
+    },
+    get localFallbackActive() {
+      return Boolean(storeCache?.localFallbackActive);
+    },
+    get rawSummaries() {
+      return storeCache?.rawSummaries ?? null;
+    },
+    async listConversations(includeArchive?: boolean) {
+      return storeCache ? storeCache.listConversations(includeArchive) : [];
+    },
+    setLocalIdentity(next: string | null) {
+      return storeCache ? storeCache.setLocalIdentity(next) : false;
+    },
+  };
+
+  const getPaths = async (): Promise<PlatformPaths> => {
+    if (!pathsCache) {
+      if (options.paths) {
+        pathsCache = options.paths;
+      } else {
+        const { platformPaths } = await loadPathsModule();
+        pathsCache = platformPaths();
+      }
+    }
     return pathsCache;
   };
-  const getLedger = (): UsageLedger => {
-    if (!ledgerCache) ledgerCache = new UsageLedger(join(getPaths().data, 'usage-v1'));
+  const getLedger = async (): Promise<UsageLedger> => {
+    if (!ledgerCache) {
+      if (options.ledger) {
+        ledgerCache = options.ledger;
+      } else {
+        const [{ UsageLedger }, p] = await Promise.all([loadLedgerModule(), getPaths()]);
+        ledgerCache = new UsageLedger(join(p.data, 'usage-v1'));
+      }
+    }
     return ledgerCache;
   };
-  const getPrefs = (): PreferencesStore => {
+  const getPrefs = async (): Promise<PreferencesStore> => {
     if (!prefsCache) {
-      const file =
-        process.env.AG_PULSE_PREFERENCES_FILE ||
-        join(dirname(getPaths().settings), 'preferences.json');
-      prefsCache = new PreferencesStore({ file });
+      if (options.preferences) {
+        prefsCache = options.preferences;
+      } else {
+        const [{ PreferencesStore }, p] = await Promise.all([loadPreferencesModule(), getPaths()]);
+        const file =
+          process.env.AG_PULSE_PREFERENCES_FILE ||
+          join(dirname(p.settings), 'preferences.json');
+        prefsCache = new PreferencesStore({ file });
+      }
     }
     return prefsCache;
   };
-  const getIdentityResolver = () => {
+  const getIdentityResolver = async () => {
     if (!identityResolver) {
-      const p = getPaths();
-      identityResolver = createLocalIdentityResolver(getLedger(), p.profile, p.isIsolatedVertex);
+      const [ledger, p] = await Promise.all([getLedger(), getPaths()]);
+      identityResolver = createLocalIdentityResolver(ledger, p.profile, p.isIsolatedVertex);
     }
     return identityResolver;
   };
-  const getStore = (): MetricsStore => {
+  const getStore = async (): Promise<MetricsStore> => {
     if (!storeCache) {
-      const p = getPaths();
-      storeCache = new MetricsStore(undefined, {
-        dataDir: p.data,
-        owns: () => true,
-        resolveLocalIdentity: getIdentityResolver(),
-      });
+      if (options.store) {
+        storeCache = options.store;
+      } else {
+        const [{ MetricsStore }, p, resolveLocalIdentity] = await Promise.all([
+          loadStoreModule(),
+          getPaths(),
+          getIdentityResolver(),
+        ]);
+        storeCache = new MetricsStore(undefined, {
+          dataDir: p.data,
+          owns: () => true,
+          resolveLocalIdentity,
+        });
+      }
     }
     return storeCache;
   };
-  const getUsage = (): DesktopUsage => {
+  const getUsage = async (): Promise<DesktopUsage> => {
     if (!usageCache) {
-      const p = getPaths();
-      // owns: () => false guarantees zero background sync loops or continuation timers.
-      usageCache = new DesktopUsage(getStore(), getLedger(), {
-        host: 'app',
-        conversationsDir: defaultConversationsDir('app', p.home),
-        owns: () => false,
-        now: nowFn,
-      });
+      const injectedUsage = options.usage as (DesktopUsage & { disposed?: boolean }) | undefined;
+      if (injectedUsage && !injectedUsage.disposed) {
+        usageCache = injectedUsage;
+      } else {
+        const [{ DesktopUsage }, { defaultConversationsDir }, ledger, p] = await Promise.all([
+          loadLedgerModule(),
+          loadLocalConversationsModule(),
+          getLedger(),
+          getPaths(),
+        ]);
+        // owns: () => false guarantees zero background sync loops or continuation timers.
+        usageCache = new DesktopUsage(usageStoreAdapter, ledger, {
+          host: 'app',
+          conversationsDir: defaultConversationsDir('app', p.home),
+          owns: () => false,
+          now: nowFn,
+        });
+      }
     }
     return usageCache;
   };
-  const getProfileDir = (): string =>
-    options.profileDir ?? dirname(defaultConversationsDir('app', getPaths().home));
-  const getTheme = (): Promise<HostThemeConfig> =>
-    options.readTheme ? options.readTheme() : readHostTheme({ file: getPaths().pluginConfig });
+  const getProfileDir = async (): Promise<string> => {
+    if (options.profileDir !== undefined) return options.profileDir;
+    const [{ defaultConversationsDir }, p] = await Promise.all([
+      loadLocalConversationsModule(),
+      getPaths(),
+    ]);
+    return dirname(defaultConversationsDir('app', p.home));
+  };
+  const getTheme = async (): Promise<HostThemeConfig> => {
+    if (options.readTheme) return options.readTheme();
+    const [{ readHostTheme }, p] = await Promise.all([loadThemeModule(), getPaths()]);
+    return readHostTheme({ file: p.pluginConfig });
+  };
 
   const buildUsageSnapshot = async (force = false): Promise<UsageSummarySnapshot | null> => {
-    const ledger = getLedger();
-    const usage = getUsage();
-    const store = getStore();
+    const [ledger, usage] = await Promise.all([getLedger(), getUsage()]);
+    const store = storeCache;
     if (force) ledger.cache = null;
     const scope = usage.viewScope || 'all';
     const [raw, accountsRaw, activeLocal] = await Promise.all([
@@ -429,23 +554,24 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
     ]);
     if (!raw) return null;
     const accounts = toPlainAccounts(accountsRaw);
-    const recordingAccount = store.identity || activeLocal || null;
+    const storeIdentity = store?.identity || null;
+    const recordingAccount = storeIdentity || activeLocal || null;
     const firstReal = accounts.find((a) => a.id !== 'all')?.id;
     const activeAccount =
-      store.identity || activeLocal || (scope !== 'all' ? scope : firstReal) || scope;
+      storeIdentity || activeLocal || (scope !== 'all' ? scope : firstReal) || scope;
     return {
       ...raw,
       viewScope: scope,
       activeAccount,
       recordingAccount,
-      localAccountMode: Boolean(store.localFallbackActive),
+      localAccountMode: Boolean(store?.localFallbackActive),
       accounts,
       syncing: false,
       status: 'ready',
       missingConversations: 0,
       confirmedMissingConversations: 0,
       retryingConversations: 0,
-      persistenceError: store.usagePersistenceError === true,
+      persistenceError: store?.usagePersistenceError === true,
     };
   };
 
@@ -454,9 +580,10 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
     preferences: PreferencesSnapshot;
     theme: HostThemeConfig;
   }> => {
+    const prefs = await getPrefs();
     const [usageSnap, preferences, theme] = await Promise.all([
       buildUsageSnapshot(force),
-      getPrefs().snapshot(),
+      prefs.snapshot(),
       getTheme(),
     ]);
     return { usage: usageSnap, preferences, theme };
@@ -466,16 +593,18 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
     if (typeof rawScope === 'string' && rawScope.trim() && rawScope !== 'all') {
       return rawScope.trim();
     }
-    const store = getStore();
-    if (store.identity && SCOPE_HASH.test(store.identity)) return store.identity;
-    const resolved = await getIdentityResolver()([]);
+    const store = storeCache;
+    if (store?.identity && SCOPE_HASH.test(store.identity)) return store.identity;
+    const resolveLocalIdentity = await getIdentityResolver();
+    const resolved = await resolveLocalIdentity([]);
     if (resolved && SCOPE_HASH.test(resolved)) return resolved;
     throw new Error('Invalid usage scope');
   };
 
   const handleOpenDashboard = async (args: Record<string, unknown>): Promise<McpCallToolResult> => {
     if (typeof args.scope === 'string' && args.scope.trim()) {
-      await getUsage().switchAccount(args.scope.trim());
+      const usage = await getUsage();
+      await usage.switchAccount(args.scope.trim());
     }
     const initial = await buildFullSnapshot(args.force === true);
     const u = initial.usage;
@@ -504,24 +633,25 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
     if (dimRaw !== 'model' && dimRaw !== 'user' && dimRaw !== 'project') {
       throw new Error(`Invalid dimension: ${dimRaw}`);
     }
-    const scope = typeof args.scope === 'string' && args.scope.trim() ? args.scope.trim() : getUsage().viewScope || 'all';
+    const scope = typeof args.scope === 'string' && args.scope.trim() ? args.scope.trim() : currentViewScope();
     if (scope !== 'all' && !SCOPE_HASH.test(scope)) throw new Error('Invalid account scope');
 
-    const ledger = getLedger();
+    const [ledger, ledgerMod] = await Promise.all([getLedger(), loadLedgerModule()]);
     const summary = await ledger.summary(scope, nowFn());
-    const today = summary?.today || dateKey(nowFn(), ledger.timeZone);
+    const today = summary?.today || ledgerMod.dateKey(nowFn(), ledger.timeZone);
     const { from, to } = resolveDateRange(
       today,
       periodRaw,
+      ledgerMod.weekStart,
       typeof args.from === 'string' ? args.from : undefined,
       typeof args.to === 'string' ? args.to : undefined,
     );
 
     if (dimRaw === 'project') {
-      const overview = await queryProjectUsageOverview({
+      const overview = await ledgerMod.queryProjectUsageOverview({
         ledger,
-        store: getStore(),
-        profileDir: getProfileDir(),
+        store: storeCache ?? undefined,
+        profileDir: await getProfileDir(),
         scope,
         from,
         to,
@@ -644,7 +774,8 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
   const handleQuotaAndSession = async (args: Record<string, unknown>): Promise<McpCallToolResult> => {
     const conversationId = typeof args.conversationId === 'string' && args.conversationId.trim() ? args.conversationId.trim() : null;
     const force = args.force === true;
-    const snap = await getStore().snapshot({ conversationId, force });
+    const store = await getStore();
+    const snap = await store.snapshot({ conversationId, force });
     const markdown = formatQuotaMarkdown(
       snap.connection,
       snap.source ?? null,
@@ -678,75 +809,89 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
           return okAction('Loaded usage snapshot.', data);
         }
         case 'get_accounts': {
-          const res = await getUsage().getAccounts();
+          const usage = await getUsage();
+          const res = await usage.getAccounts();
           const data = {
-            active: res.active ?? getUsage().viewScope ?? 'all',
+            active: res.active ?? usage.viewScope ?? 'all',
             activeAccount: res.activeAccount ?? res.active ?? 'all',
             accounts: toPlainAccounts(res),
           };
           return okAction(`Loaded ${data.accounts.length} accounts.`, data);
         }
         case 'switch_account': {
-          const data = await getUsage().switchAccount(payload as SwitchAccountRequest);
+          const usage = await getUsage();
+          const data = await usage.switchAccount(payload as SwitchAccountRequest);
           return okAction(`Switched view scope to ${data.active}.`, data);
         }
         case 'get_recording_account': {
-          const state = await getUsage().getRecordingAccountState();
+          const usage = await getUsage();
+          const state = await usage.getRecordingAccountState();
           return okAction('Loaded recording account state.', {
             ...state,
             accounts: toPlainAccounts(state.accounts),
           });
         }
         case 'set_recording_account': {
-          const state = await getUsage().setRecordingAccount(payload as SetRecordingAccountRequest);
+          const usage = await getUsage();
+          const state = await usage.setRecordingAccount(payload as SetRecordingAccountRequest);
           return okAction('Updated recording account.', {
             ...state,
             accounts: toPlainAccounts(state.accounts),
           });
         }
         case 'add_account': {
-          const res = await getUsage().addLocalAccount(payload as AddAccountRequest);
+          const usage = await getUsage();
+          const res = await usage.addLocalAccount(payload as AddAccountRequest);
           return okAction(`Added account ${res.account.name}.`, {
             ...res,
             accounts: toPlainAccounts(res.accounts),
           });
         }
         case 'reassign_conversation': {
-          const res = await getUsage().reassignConversation(payload as unknown as ReassignConversationRequest);
+          const usage = await getUsage();
+          const res = await usage.reassignConversation(payload as unknown as ReassignConversationRequest);
           return okAction(`Reassigned ${res.reassigned} conversation(s).`, res);
         }
         case 'add_manual_usage': {
           const req = payload as AddManualUsageRequest;
           const scope = await resolveScopeForWrite(req.scope);
-          const entry = await getUsage().addManualUsage(scope, (req.data || req) as ManualUsageInput);
+          const usage = await getUsage();
+          const entry = await usage.addManualUsage(scope, (req.data || req) as ManualUsageInput);
           return okAction(`Recorded manual usage entry ${entry.id}.`, entry);
         }
         case 'delete_manual_usage': {
           const req = payload as unknown as DeleteManualUsageRequest;
           const id = typeof req === 'string' ? req : typeof req?.id === 'string' ? req.id : '';
           const rawScope = typeof req === 'object' && req !== null ? req.scope : '';
+          const usage = await getUsage();
           let deleted = false;
           if (typeof rawScope === 'string' && SCOPE_HASH.test(rawScope)) {
-            deleted = await getUsage().deleteManualUsage(rawScope, id);
+            deleted = await usage.deleteManualUsage(rawScope, id);
           } else if (!rawScope || rawScope === 'all') {
-            const dirs = await getLedger().scopeDirectories();
+            const ledger = await getLedger();
+            const dirs = await ledger.scopeDirectories();
             for (const dir of dirs) {
-              if (await getUsage().deleteManualUsage(dir, id)) {
+              if (await usage.deleteManualUsage(dir, id)) {
                 deleted = true;
                 break;
               }
             }
           } else {
-            deleted = await getUsage().deleteManualUsage(rawScope, id);
+            deleted = await usage.deleteManualUsage(rawScope, id);
           }
           return okAction(deleted ? `Deleted manual usage entry ${id}.` : `Manual usage entry ${id} not found.`, deleted);
         }
         case 'get_project_overview': {
-          const data = await queryProjectUsageOverview({
-            ledger: getLedger(),
-            store: getStore(),
-            profileDir: getProfileDir(),
-            scope: typeof payload.scope === 'string' ? payload.scope : getUsage().viewScope || 'all',
+          const [ledgerMod, ledger, profileDir] = await Promise.all([
+            loadLedgerModule(),
+            getLedger(),
+            getProfileDir(),
+          ]);
+          const data = await ledgerMod.queryProjectUsageOverview({
+            ledger,
+            store: storeCache ?? undefined,
+            profileDir,
+            scope: typeof payload.scope === 'string' ? payload.scope : currentViewScope(),
             from: typeof payload.from === 'string' ? payload.from : undefined,
             to: typeof payload.to === 'string' ? payload.to : undefined,
             timeZone: typeof payload.timeZone === 'string' ? payload.timeZone : undefined,
@@ -756,12 +901,17 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
         case 'get_project_detail': {
           const projectKey = typeof payload.projectKey === 'string' ? payload.projectKey.trim() : '';
           if (!projectKey) throw new Error('projectKey is required');
-          const data = await queryProjectConversationDetail({
-            ledger: getLedger(),
-            store: getStore(),
-            profileDir: getProfileDir(),
+          const [ledgerMod, ledger, profileDir] = await Promise.all([
+            loadLedgerModule(),
+            getLedger(),
+            getProfileDir(),
+          ]);
+          const data = await ledgerMod.queryProjectConversationDetail({
+            ledger,
+            store: storeCache ?? undefined,
+            profileDir,
             projectKey,
-            scope: typeof payload.scope === 'string' ? payload.scope : getUsage().viewScope || 'all',
+            scope: typeof payload.scope === 'string' ? payload.scope : currentViewScope(),
             from: typeof payload.from === 'string' ? payload.from : undefined,
             to: typeof payload.to === 'string' ? payload.to : undefined,
             timeZone: typeof payload.timeZone === 'string' ? payload.timeZone : undefined,
@@ -769,11 +919,13 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
           return okAction(`Loaded ${data.conversations.length} conversation(s) for ${data.projectName}.`, data);
         }
         case 'get_preferences': {
-          const data = await getPrefs().snapshot();
+          const prefs = await getPrefs();
+          const data = await prefs.snapshot();
           return okAction('Loaded preferences.', data);
         }
         case 'set_preferences': {
-          const saved = await getPrefs().set(payload as PreferencesUpdateInput);
+          const prefs = await getPrefs();
+          const saved = await prefs.set(payload as PreferencesUpdateInput);
           storeCache?.setModelTimelineEnabled(saved.modelTimelineEnabled === true);
           return okAction('Saved preferences.', saved);
         }
@@ -785,8 +937,92 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
     }
   };
 
+  const clearIdleTimer = (): void => {
+    if (idleTimer !== null) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+
+  const disposeInMemoryCaches = (): void => {
+    try {
+      usageCache?.dispose?.();
+    } catch {}
+    usageCache = null;
+
+    try {
+      storeCache?.dispose?.();
+    } catch {}
+    storeCache = null;
+
+    if (ledgerCache) {
+      try {
+        ledgerCache.cache = null;
+        ledgerCache.fileIndex?.clear?.();
+        ledgerCache.metaCache = null;
+        ledgerCache.ownershipCache = null;
+        ledgerCache.dirtyRelPaths?.clear?.();
+        ledgerCache.projectDirtyRelPaths?.clear?.();
+        ledgerCache.keyVersions?.clear?.();
+      } catch {}
+    }
+    ledgerCache = null;
+    prefsCache = null;
+    pathsCache = null;
+    identityResolver = null;
+  };
+
+  const releaseNativeCachesSafe = async (): Promise<void> => {
+    try {
+      const mod = nativeBridgeMod ?? (await loadNativeBridgeModule());
+      nativeBridgeMod = mod;
+      (mod as { releaseNativeCaches?: (mode: 'soft' | 'full') => unknown }).releaseNativeCaches?.('full');
+    } catch {
+      // Native addon may be disabled or unavailable.
+    }
+  };
+
+  const runIdleTeardown = (): Promise<void> => {
+    if (teardownPromise) return teardownPromise;
+    disposeInMemoryCaches();
+    if (nativeBridgeMod || !allDoublesInjected) {
+      teardownPromise = releaseNativeCachesSafe().finally(() => {
+        teardownPromise = null;
+      });
+      return teardownPromise;
+    }
+    return Promise.resolve();
+  };
+
+  const scheduleIdleTeardown = (): void => {
+    clearIdleTimer();
+    if (disposed || idleDisposeMs <= 0 || inFlightCalls > 0) return;
+    idleTimer = setTimeout(() => {
+      idleTimer = null;
+      if (disposed || inFlightCalls > 0) return;
+      void runIdleTeardown();
+    }, idleDisposeMs);
+    (idleTimer as unknown as { unref?: () => void }).unref?.();
+  };
+
   return {
     async callTool(name: string, args: Record<string, unknown>): Promise<McpCallToolResult> {
+      if (disposed) {
+        return errAction(new Error('MCP backend is disposed'));
+      }
+      hasActivatedBackend = true;
+      inFlightCalls += 1;
+      clearIdleTimer();
+      if (!nativeBridgeMod && !allDoublesInjected) {
+        void loadNativeBridgeModule()
+          .then((mod) => {
+            nativeBridgeMod = mod;
+          })
+          .catch(() => {});
+      }
+      if (teardownPromise) {
+        await teardownPromise;
+      }
       try {
         if (name === 'open_usage_dashboard') return await handleOpenDashboard(args);
         if (name === 'query_usage_stats') return await handleQueryStats(args);
@@ -795,11 +1031,25 @@ export function createPulseMcpBackend(options: PulseMcpBackendOptions = {}): Pul
         return errAction(new Error(`Unknown tool: ${name}`));
       } catch (error) {
         return errAction(error);
+      } finally {
+        inFlightCalls = Math.max(0, inFlightCalls - 1);
+        if (!disposed && inFlightCalls === 0) {
+          scheduleIdleTeardown();
+        }
       }
     },
     dispose(): void {
-      usageCache?.dispose();
-      storeCache?.dispose();
+      if (disposed) return;
+      disposed = true;
+      clearIdleTimer();
+      disposeInMemoryCaches();
+      if (nativeBridgeMod) {
+        try {
+          (nativeBridgeMod as { releaseNativeCaches?: (mode: 'soft' | 'full') => unknown }).releaseNativeCaches?.('full');
+        } catch {}
+      } else if (hasActivatedBackend && !allDoublesInjected) {
+        void releaseNativeCachesSafe();
+      }
     },
   };
 }

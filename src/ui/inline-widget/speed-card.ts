@@ -20,9 +20,10 @@ export function renderSpeedContextCacheCards(params: {
   const speed = data.speed;
 
   toggleHidden(root.querySelector<HTMLElement>('[data-card="speed"]'), !lastConversation && !surface?.showEmpty);
+  const hasUsageSummary = Boolean(data.usage ?? data.usageTotals);
   toggleHidden(
     root.querySelector<HTMLElement>('[data-card="cache"]'),
-    !lastConversation && !surface?.showEmpty && !data.usage,
+    !lastConversation && !surface?.showEmpty && !hasUsageSummary,
   );
   toggleHidden(root.querySelector<HTMLElement>('[data-card="context"]'), false);
 

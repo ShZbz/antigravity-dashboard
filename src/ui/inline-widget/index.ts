@@ -67,6 +67,7 @@ export default function installAgPulseInlineWidget(): void {
   let layoutFrame: number | null = null;
   let usageDashboard: UsageDashboardHandle | null = null;
   let updateMenu: UpdateMenuHandle | null = null;
+  let pendingUsageOpen: Promise<void> | null = null;
   let inlineFontScale = resolveFontScale(localGet('ag-pulse-inline-font-scale'));
   const applyInlineFontScale = (scale: unknown): void => {
     inlineFontScale = resolveFontScale(scale);
@@ -104,6 +105,7 @@ export default function installAgPulseInlineWidget(): void {
     getRoot: () => root,
     getNode: () => node,
     getLanguage: () => language,
+    isUsageOpen: () => Boolean(usageDashboard?.isOpen),
     onConversationReset: () => density.reset(node),
     onRender: () => render(),
     onHide: () => cards.hide(),
@@ -177,6 +179,7 @@ export default function installAgPulseInlineWidget(): void {
     density.reset(node);
     composer = null;
     resizeObserver?.disconnect();
+    pendingUsageOpen = null;
     if (!node) return;
     cards.hide();
     usageDashboard?.dispose();
@@ -191,6 +194,46 @@ export default function installAgPulseInlineWidget(): void {
     // A disposed dialog cannot be reused with its old strip/listeners.
     // Invalidate this mount's pending requests and rebuild on discovery.
     polling.invalidateEpoch();
+  }
+
+  function openUsage(trigger: Element | null): boolean {
+    if (!usageDashboard || polling.isDisposed || !node?.isConnected) return false;
+    cards.hide();
+    if (polling.data?.usage) {
+      usageDashboard.open(polling.data.usage, trigger);
+      return true;
+    }
+    if (pendingUsageOpen) return true;
+    const activeNode = node;
+    const activeDashboard = usageDashboard;
+    const activeConversation = polling.lastConversation;
+    let req: Promise<void> | null = null;
+    req = polling
+      .fetchUsage()
+      .then((usage) => {
+        if (
+          polling.isDisposed ||
+          !activeNode.isConnected ||
+          node !== activeNode ||
+          usageDashboard !== activeDashboard ||
+          polling.lastConversation !== activeConversation ||
+          !usage
+        ) {
+          return;
+        }
+        cards.hide();
+        activeDashboard.open(usage, trigger);
+      })
+      .catch(() => {
+        // Non-fatal; next click or poll can retry.
+      })
+      .finally(() => {
+        if (pendingUsageOpen === req) {
+          pendingUsageOpen = null;
+        }
+      });
+    pendingUsageOpen = req;
+    return true;
   }
 
   function mount(): void {
@@ -227,6 +270,7 @@ export default function installAgPulseInlineWidget(): void {
         preferences.sync(prefs);
       },
       onObserveComposer: observeComposer,
+      onOpenUsage: openUsage,
     });
     ({ node, root, themeController, updateMenu, usageDashboard } = mounted);
     applyInlineFontScale(inlineFontScale);
@@ -251,8 +295,13 @@ export default function installAgPulseInlineWidget(): void {
     if (nextGroup !== undefined) group = nextGroup;
   }
 
+  const isGuideVisible = (): boolean => {
+    const tip = root?.getElementById('language-guide') as HTMLElement | null;
+    return Boolean(tip && !tip.hidden);
+  };
   const unbindHost = bindHostLifecycleListeners({
     getNode: () => node,
+    shouldTrackScroll: () => cards.cardName !== null || isGuideVisible(),
     scheduleLayout,
     hideCards: () => cards.hide(),
   });
@@ -270,14 +319,10 @@ export default function installAgPulseInlineWidget(): void {
   document.addEventListener('visibilitychange', onVisibilityChange);
   const timerId = setInterval(runHeartbeat, 1000);
 
-  win.__agPulseOpenUsage = () => {
-    if (!usageDashboard || !polling.data?.usage) return false;
-    cards.hide();
-    usageDashboard.open(polling.data.usage, null);
-    return true;
-  };
+  win.__agPulseOpenUsage = () => openUsage(null);
 
   win.__agPulseDispose = () => {
+    pendingUsageOpen = null;
     polling.dispose();
     density.dispose(node);
     clearInterval(timerId);

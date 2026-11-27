@@ -30,15 +30,68 @@ struct CachedSummarySnapshot {
     snapshot: UsageSummarySnapshotOut,
 }
 
+#[derive(Default)]
 struct InMemLedgerCache {
     directory: String,
     bin_mtime_ns: Option<i128>,
     bin_size: Option<u64>,
-    entries: Arc<HashMap<(String, String), CachedFileEntry>>,
+    model_pool: Vec<String>,
+    scope_pool: Vec<String>,
+    entries: Arc<HashMap<u16, HashMap<Box<str>, CachedFileEntry>>>,
+    file_stamps: HashMap<String, HashMap<Box<str>, (i128, u64)>>,
+    soft_released: bool,
     last_snapshot: Option<CachedSummarySnapshot>,
 }
 
 static LEDGER_MEM_CACHE: Mutex<Option<InMemLedgerCache>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) static CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Releases cached in-memory ledger structures in `soft` (keep snapshot + file stamps) or `full` mode.
+pub fn release_ledger_mem_cache(mode: &str) -> bool {
+    let mut guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    match mode {
+        "full" => guard.take().is_some(),
+        "soft" => {
+            let Some(cache) = guard.as_mut() else {
+                return false;
+            };
+            let had_raw = !cache.entries.is_empty()
+                || !cache.model_pool.is_empty()
+                || !cache.scope_pool.is_empty();
+            if !cache.soft_released {
+                let mut stamps: HashMap<String, HashMap<Box<str>, (i128, u64)>> =
+                    HashMap::with_capacity(cache.entries.len());
+                for (&scope_idx, files) in cache.entries.iter() {
+                    let Some(scope_name) = cache.scope_pool.get(scope_idx as usize) else {
+                        continue;
+                    };
+                    if files.is_empty() {
+                        continue;
+                    }
+                    let mut inner: HashMap<Box<str>, (i128, u64)> =
+                        HashMap::with_capacity(files.len());
+                    for (fname, entry) in files.iter() {
+                        inner.insert(fname.clone(), (entry.mtime_ns, entry.file_size));
+                    }
+                    inner.shrink_to_fit();
+                    stamps.insert(scope_name.clone(), inner);
+                }
+                stamps.shrink_to_fit();
+                cache.file_stamps = stamps;
+                cache.soft_released = true;
+            }
+            cache.entries = Arc::new(HashMap::new());
+            cache.model_pool.clear();
+            cache.model_pool.shrink_to_fit();
+            cache.scope_pool.clear();
+            cache.scope_pool.shrink_to_fit();
+            had_raw
+        }
+        _ => false,
+    }
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +142,7 @@ pub struct LedgerSummaryQuery {
     pub dirty_rel_paths: Vec<String>,
 }
 
-fn deserialize_known_accounts<'de, D>(
+pub(crate) fn deserialize_known_accounts<'de, D>(
     deserializer: D,
 ) -> Result<Vec<(String, KnownAccountInfo)>, D::Error>
 where
@@ -140,34 +193,173 @@ fn parse_known_account_value(val: &Value) -> Option<KnownAccountInfo> {
     })
 }
 
+const REC_FLAG_PARTIAL: u8 = 0x01;
+const REC_FLAG_LEGACY: u8 = 0x02;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RecordId {
+    Sha256([u8; 32]),
+    Raw(Box<str>),
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
+}
+
+fn decode_hex64(s: &str) -> Option<[u8; 32]> {
+    let bytes = s.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let hi = hex_nibble(bytes[i * 2])?;
+        let lo = hex_nibble(bytes[i * 2 + 1])?;
+        *slot = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+impl RecordId {
+    fn from_str_id(s: &str) -> Self {
+        match decode_hex64(s) {
+            Some(bytes) => Self::Sha256(bytes),
+            None => Self::Raw(s.into()),
+        }
+    }
+
+    fn format_hex32(bytes: &[u8; 32]) -> [u8; 64] {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = [0u8; 64];
+        for (i, &b) in bytes.iter().enumerate() {
+            out[i * 2] = HEX[(b >> 4) as usize];
+            out[i * 2 + 1] = HEX[(b & 0x0f) as usize];
+        }
+        out
+    }
+
+    fn write_bin_str(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Sha256(bytes) => {
+                let hex = Self::format_hex32(bytes);
+                out.extend_from_slice(&(hex.len() as u32).to_le_bytes());
+                out.extend_from_slice(&hex);
+            }
+            Self::Raw(s) => write_str(out, s),
+        }
+    }
+
+    #[cfg(test)]
+    fn to_string_id(&self) -> String {
+        match self {
+            Self::Sha256(bytes) => {
+                let hex = Self::format_hex32(bytes);
+                std::str::from_utf8(&hex).unwrap_or_default().to_string()
+            }
+            Self::Raw(s) => s.to_string(),
+        }
+    }
+}
+
+struct StringPoolBuilder {
+    pool: Vec<String>,
+    index: HashMap<String, u16>,
+}
+
+impl StringPoolBuilder {
+    fn new() -> Self {
+        Self {
+            pool: Vec::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    fn from_pool(pool: Vec<String>) -> Self {
+        let mut index = HashMap::with_capacity(pool.len());
+        for (i, s) in pool.iter().enumerate() {
+            if let Ok(idx) = u16::try_from(i) {
+                index.insert(s.clone(), idx);
+            }
+        }
+        Self { pool, index }
+    }
+
+    fn intern(&mut self, s: &str) -> Option<u16> {
+        if let Some(&idx) = self.index.get(s) {
+            return Some(idx);
+        }
+        let idx = u16::try_from(self.pool.len()).ok()?;
+        let owned = s.to_string();
+        self.pool.push(owned.clone());
+        self.index.insert(owned, idx);
+        Some(idx)
+    }
+
+    fn into_pool(mut self) -> Vec<String> {
+        self.pool.shrink_to_fit();
+        self.pool
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PackedUsageRecord {
-    id: String,
-    at: Option<i64>,
-    model: String,
-    uncached: Option<i64>,
-    cache_read: Option<i64>,
-    cache_write: Option<i64>,
-    output: Option<i64>,
-    partial: bool,
-    is_legacy: bool,
+    id: RecordId,
+    at: i64,
+    uncached: i64,
+    cache_read: i64,
+    cache_write: i64,
+    output: i64,
+    model_idx: u16,
+    flags: u8,
+}
+
+#[inline]
+fn nn_i64(v: i64) -> i64 {
+    if v >= 0 {
+        v
+    } else {
+        0
+    }
 }
 
 impl PackedUsageRecord {
     fn sum(&self) -> i64 {
-        self.uncached
-            .unwrap_or(0)
-            .saturating_add(self.cache_read.unwrap_or(0))
-            .saturating_add(self.cache_write.unwrap_or(0))
-            .saturating_add(self.output.unwrap_or(0))
+        nn_i64(self.uncached)
+            .saturating_add(nn_i64(self.cache_read))
+            .saturating_add(nn_i64(self.cache_write))
+            .saturating_add(nn_i64(self.output))
+    }
+
+    #[inline]
+    fn is_partial(&self) -> bool {
+        (self.flags & REC_FLAG_PARTIAL) != 0
+    }
+
+    #[inline]
+    fn is_legacy(&self) -> bool {
+        (self.flags & REC_FLAG_LEGACY) != 0
     }
 }
 
+#[cfg(test)]
 fn validate_cached_i64(raw: i64) -> Option<Option<i64>> {
     if raw == -1 {
         Some(None)
     } else if (0..=MAX_SAFE_INT).contains(&raw) {
         Some(Some(raw))
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn validate_cached_sentinel_i64(raw: i64) -> Option<i64> {
+    if raw == -1 || (0..=MAX_SAFE_INT).contains(&raw) {
+        Some(raw)
     } else {
         None
     }
@@ -185,14 +377,32 @@ struct ManualEntryMeta {
 
 #[derive(Debug, Clone)]
 struct CachedFileEntry {
-    scope: String,
-    file_name: String,
     mtime_ns: i128,
     file_size: u64,
     unreadable: bool,
     file_marked_legacy: bool,
-    manual_meta: Option<ManualEntryMeta>,
+    manual_meta: Option<Box<ManualEntryMeta>>,
     records: Vec<PackedUsageRecord>,
+}
+
+struct ParsedUsageRecord {
+    id: RecordId,
+    at: i64,
+    model: String,
+    uncached: i64,
+    cache_read: i64,
+    cache_write: i64,
+    output: i64,
+    flags: u8,
+}
+
+struct ParsedFileEntry {
+    mtime_ns: i128,
+    file_size: u64,
+    unreadable: bool,
+    file_marked_legacy: bool,
+    manual_meta: Option<Box<ManualEntryMeta>>,
+    records: Vec<ParsedUsageRecord>,
 }
 
 pub(crate) fn is_hex64(s: &str) -> bool {
@@ -224,7 +434,7 @@ fn is_valid_guid(s: &str) -> bool {
     false
 }
 
-fn sha256_hex(input: &str) -> String {
+pub(crate) fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     let digest = hasher.finalize();
@@ -236,11 +446,11 @@ fn sha256_hex(input: &str) -> String {
     out
 }
 
-fn opt_non_empty(s: Option<&str>) -> Option<&str> {
+pub(crate) fn opt_non_empty(s: Option<&str>) -> Option<&str> {
     s.filter(|v| !v.is_empty())
 }
 
-fn parse_safe_nonneg_int(val: &Value) -> Option<i64> {
+pub(crate) fn parse_safe_nonneg_int(val: &Value) -> Option<i64> {
     if let Some(n) = val.as_i64() {
         if (0..=MAX_SAFE_INT).contains(&n) {
             return Some(n);
@@ -261,7 +471,7 @@ fn parse_safe_nonneg_int(val: &Value) -> Option<i64> {
     None
 }
 
-fn parse_nullable_safe_int(val: Option<&Value>) -> Result<Option<i64>, ()> {
+pub(crate) fn parse_nullable_safe_int(val: Option<&Value>) -> Result<Option<i64>, ()> {
     match val {
         None => Err(()),
         Some(Value::Null) => Ok(None),
@@ -293,7 +503,7 @@ pub(crate) fn read_cache_file_stamp(cache_path: &Path) -> (Option<i128>, Option<
     }
 }
 
-fn load_accounts_meta(dir: &Path) -> Result<HashMap<String, KnownAccountInfo>, ()> {
+pub(crate) fn load_accounts_meta(dir: &Path) -> Result<HashMap<String, KnownAccountInfo>, ()> {
     let path = dir.join("accounts-v1.json");
     let bytes = match fs::read(&path) {
         Ok(b) => b,
@@ -324,7 +534,7 @@ fn load_accounts_meta(dir: &Path) -> Result<HashMap<String, KnownAccountInfo>, (
     Ok(out)
 }
 
-fn load_ownership(dir: &Path) -> Result<HashMap<String, String>, ()> {
+pub(crate) fn load_ownership(dir: &Path) -> Result<HashMap<String, String>, ()> {
     let path = dir.join("ownership-v1.json");
     let bytes = match fs::read(&path) {
         Ok(b) => b,
@@ -355,7 +565,7 @@ fn load_ownership(dir: &Path) -> Result<HashMap<String, String>, ()> {
     Ok(out)
 }
 
-fn list_scope_directories(dir: &Path) -> Result<Vec<String>, ()> {
+pub(crate) fn list_scope_directories(dir: &Path) -> Result<Vec<String>, ()> {
     let entries = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -382,22 +592,19 @@ fn list_scope_directories(dir: &Path) -> Result<Vec<String>, ()> {
 }
 
 enum ParseFileStatus {
-    Parsed(CachedFileEntry),
+    Parsed(ParsedFileEntry),
     Missing,
     TransientError,
 }
 
 fn parse_ledger_file(
     scope: &str,
-    file_name: &str,
     path: &Path,
     mtime_ns: i128,
     file_size: u64,
 ) -> ParseFileStatus {
     let make_unreadable = || {
-        ParseFileStatus::Parsed(CachedFileEntry {
-            scope: scope.to_string(),
-            file_name: file_name.to_string(),
+        ParseFileStatus::Parsed(ParsedFileEntry {
             mtime_ns,
             file_size,
             unreadable: true,
@@ -466,16 +673,19 @@ fn parse_ledger_file(
         let Ok(output) = parse_nullable_safe_int(robj.get("output")) else {
             return make_unreadable();
         };
-        records.push(PackedUsageRecord {
-            id: rid.to_string(),
-            at,
+        let partial = is_js_truthy(robj.get("partial"));
+        let is_legacy = robj.get("isLegacy").and_then(|v| v.as_bool()) == Some(true);
+        let flags = (if partial { REC_FLAG_PARTIAL } else { 0 })
+            | (if is_legacy { REC_FLAG_LEGACY } else { 0 });
+        records.push(ParsedUsageRecord {
+            id: RecordId::from_str_id(rid),
+            at: at.unwrap_or(-1),
             model: rmodel.to_string(),
-            uncached,
-            cache_read,
-            cache_write,
-            output,
-            partial: is_js_truthy(robj.get("partial")),
-            is_legacy: robj.get("isLegacy").and_then(|v| v.as_bool()) == Some(true),
+            uncached: uncached.unwrap_or(-1),
+            cache_read: cache_read.unwrap_or(-1),
+            cache_write: cache_write.unwrap_or(-1),
+            output: output.unwrap_or(-1),
+            flags,
         });
     }
 
@@ -527,21 +737,19 @@ fn parse_ledger_file(
             .and_then(|v| if v.is_null() { None } else { v.as_str() })
             .unwrap_or("")
             .to_string();
-        Some(ManualEntryMeta {
+        Some(Box::new(ManualEntryMeta {
             doc_id,
             timestamp,
             model,
             tokens_json,
             project_name,
             note,
-        })
+        }))
     } else {
         None
     };
 
-    ParseFileStatus::Parsed(CachedFileEntry {
-        scope: scope.to_string(),
-        file_name: file_name.to_string(),
+    ParseFileStatus::Parsed(ParsedFileEntry {
         mtime_ns,
         file_size,
         unreadable: false,
@@ -614,32 +822,89 @@ pub(crate) fn write_str(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(bytes);
 }
 
-fn load_binary_cache(path: &Path) -> (HashMap<(String, String), CachedFileEntry>, bool) {
+fn intern_parsed_entry(
+    parsed: ParsedFileEntry,
+    model_interner: &mut StringPoolBuilder,
+) -> Option<CachedFileEntry> {
+    let mut records = Vec::with_capacity(parsed.records.len());
+    for r in parsed.records {
+        let model_idx = model_interner.intern(&r.model)?;
+        records.push(PackedUsageRecord {
+            id: r.id,
+            at: r.at,
+            uncached: r.uncached,
+            cache_read: r.cache_read,
+            cache_write: r.cache_write,
+            output: r.output,
+            model_idx,
+            flags: r.flags,
+        });
+    }
+    records.shrink_to_fit();
+    Some(CachedFileEntry {
+        mtime_ns: parsed.mtime_ns,
+        file_size: parsed.file_size,
+        unreadable: parsed.unreadable,
+        file_marked_legacy: parsed.file_marked_legacy,
+        manual_meta: parsed.manual_meta,
+        records,
+    })
+}
+
+fn shrink_entries_map(entries: &mut HashMap<u16, HashMap<Box<str>, CachedFileEntry>>) {
+    entries.retain(|_, files| !files.is_empty());
+    for files in entries.values_mut() {
+        files.shrink_to_fit();
+    }
+    entries.shrink_to_fit();
+}
+
+type LoadedBinaryCache = (
+    HashMap<u16, HashMap<Box<str>, CachedFileEntry>>,
+    StringPoolBuilder,
+    StringPoolBuilder,
+    bool,
+);
+
+fn load_binary_cache(path: &Path) -> LoadedBinaryCache {
+    let empty = || {
+        (
+            HashMap::new(),
+            StringPoolBuilder::new(),
+            StringPoolBuilder::new(),
+            true,
+        )
+    };
     let Ok(bytes) = fs::read(path) else {
-        return (HashMap::new(), true);
+        return empty();
     };
     if bytes.len() < 8 + 4 + 4 + 8 {
-        return (HashMap::new(), true);
+        return empty();
     }
     let payload_end = bytes.len() - 8;
     let payload = &bytes[..payload_end];
     let checksum = &bytes[payload_end..];
     let digest = Sha256::digest(payload);
     if &digest[..8] != checksum {
-        return (HashMap::new(), true);
+        return empty();
     }
 
-    let Some(entries) = decode_binary_cache_payload(payload) else {
-        return (HashMap::new(), true);
+    let mut model_interner = StringPoolBuilder::new();
+    let mut scope_interner = StringPoolBuilder::new();
+    let Some(mut map) =
+        decode_binary_cache_payload(payload, &mut model_interner, &mut scope_interner)
+    else {
+        return empty();
     };
-    let mut map = HashMap::with_capacity(entries.len());
-    for e in entries {
-        map.insert((e.scope.clone(), e.file_name.clone()), e);
-    }
-    (map, false)
+    shrink_entries_map(&mut map);
+    (map, model_interner, scope_interner, false)
 }
 
-fn decode_binary_cache_payload(payload: &[u8]) -> Option<Vec<CachedFileEntry>> {
+fn decode_binary_cache_payload(
+    payload: &[u8],
+    model_interner: &mut StringPoolBuilder,
+    scope_interner: &mut StringPoolBuilder,
+) -> Option<HashMap<u16, HashMap<Box<str>, CachedFileEntry>>> {
     let mut cur = BinCursor::new(payload);
     if cur.read_bytes(8)? != LEDGER_CACHE_MAGIC {
         return None;
@@ -648,9 +913,10 @@ fn decode_binary_cache_payload(payload: &[u8]) -> Option<Vec<CachedFileEntry>> {
         return None;
     }
     let count = cur.read_u32()? as usize;
-    let mut out = Vec::with_capacity(count.min(4096));
+    let mut out: HashMap<u16, HashMap<Box<str>, CachedFileEntry>> = HashMap::new();
     for _ in 0..count {
         let scope = cur.read_str()?;
+        let scope_idx = scope_interner.intern(&scope)?;
         let file_name = cur.read_str()?;
         let mtime_ns = cur.read_i128()?;
         let file_size = cur.read_u64()?;
@@ -672,49 +938,51 @@ fn decode_binary_cache_payload(payload: &[u8]) -> Option<Vec<CachedFileEntry>> {
                 let tokens_json = cur.read_str()?;
                 let project_name = cur.read_str()?;
                 let note = cur.read_str()?;
-                manual_meta = Some(ManualEntryMeta {
+                manual_meta = Some(Box::new(ManualEntryMeta {
                     doc_id,
                     timestamp,
                     model,
                     tokens_json,
                     project_name,
                     note,
-                });
+                }));
             }
             let rec_count = cur.read_u32()? as usize;
             records.reserve(rec_count.min(1024));
             for _ in 0..rec_count {
-                let id = cur.read_str()?;
-                let model = cur.read_str()?;
-                let at = validate_cached_i64(cur.read_i64()?)?;
-                let uncached = validate_cached_i64(cur.read_i64()?)?;
-                let cache_read = validate_cached_i64(cur.read_i64()?)?;
-                let cache_write = validate_cached_i64(cur.read_i64()?)?;
-                let output = validate_cached_i64(cur.read_i64()?)?;
-                let rec_flags = cur.read_u8()?;
+                let id_str = cur.read_str()?;
+                let model_str = cur.read_str()?;
+                let model_idx = model_interner.intern(&model_str)?;
+                let at = validate_cached_sentinel_i64(cur.read_i64()?)?;
+                let uncached = validate_cached_sentinel_i64(cur.read_i64()?)?;
+                let cache_read = validate_cached_sentinel_i64(cur.read_i64()?)?;
+                let cache_write = validate_cached_sentinel_i64(cur.read_i64()?)?;
+                let output = validate_cached_sentinel_i64(cur.read_i64()?)?;
+                let rec_flags = cur.read_u8()? & (REC_FLAG_PARTIAL | REC_FLAG_LEGACY);
                 records.push(PackedUsageRecord {
-                    id,
+                    id: RecordId::from_str_id(&id_str),
                     at,
-                    model,
                     uncached,
                     cache_read,
                     cache_write,
                     output,
-                    partial: (rec_flags & 0x01) != 0,
-                    is_legacy: (rec_flags & 0x02) != 0,
+                    model_idx,
+                    flags: rec_flags,
                 });
             }
+            records.shrink_to_fit();
         }
-        out.push(CachedFileEntry {
-            scope,
-            file_name,
-            mtime_ns,
-            file_size,
-            unreadable,
-            file_marked_legacy,
-            manual_meta,
-            records,
-        });
+        out.entry(scope_idx).or_default().insert(
+            file_name.into_boxed_str(),
+            CachedFileEntry {
+                mtime_ns,
+                file_size,
+                unreadable,
+                file_marked_legacy,
+                manual_meta,
+                records,
+            },
+        );
     }
     if cur.pos != payload.len() {
         return None;
@@ -722,15 +990,18 @@ fn decode_binary_cache_payload(payload: &[u8]) -> Option<Vec<CachedFileEntry>> {
     Some(out)
 }
 
-fn encode_binary_cache(entries: &[&CachedFileEntry]) -> Vec<u8> {
+fn encode_binary_cache(
+    entries: &[(&str, &str, &CachedFileEntry)],
+    model_pool: &[String],
+) -> Vec<u8> {
     let mut buf = Vec::with_capacity(entries.len() * 160 + 32);
     buf.extend_from_slice(LEDGER_CACHE_MAGIC);
     buf.extend_from_slice(&LEDGER_CACHE_VERSION.to_le_bytes());
     buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
 
-    for e in entries {
-        write_str(&mut buf, &e.scope);
-        write_str(&mut buf, &e.file_name);
+    for &(scope, file_name, e) in entries {
+        write_str(&mut buf, scope);
+        write_str(&mut buf, file_name);
         buf.extend_from_slice(&e.mtime_ns.to_le_bytes());
         buf.extend_from_slice(&e.file_size.to_le_bytes());
         let flags: u8 = (if e.unreadable { 0x01 } else { 0 })
@@ -748,16 +1019,18 @@ fn encode_binary_cache(entries: &[&CachedFileEntry]) -> Vec<u8> {
             }
             buf.extend_from_slice(&(e.records.len() as u32).to_le_bytes());
             for r in &e.records {
-                write_str(&mut buf, &r.id);
-                write_str(&mut buf, &r.model);
-                buf.extend_from_slice(&r.at.unwrap_or(-1).to_le_bytes());
-                buf.extend_from_slice(&r.uncached.unwrap_or(-1).to_le_bytes());
-                buf.extend_from_slice(&r.cache_read.unwrap_or(-1).to_le_bytes());
-                buf.extend_from_slice(&r.cache_write.unwrap_or(-1).to_le_bytes());
-                buf.extend_from_slice(&r.output.unwrap_or(-1).to_le_bytes());
-                let rflags: u8 =
-                    (if r.partial { 0x01 } else { 0 }) | (if r.is_legacy { 0x02 } else { 0 });
-                buf.push(rflags);
+                r.id.write_bin_str(&mut buf);
+                let model = model_pool
+                    .get(r.model_idx as usize)
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                write_str(&mut buf, model);
+                buf.extend_from_slice(&r.at.to_le_bytes());
+                buf.extend_from_slice(&r.uncached.to_le_bytes());
+                buf.extend_from_slice(&r.cache_read.to_le_bytes());
+                buf.extend_from_slice(&r.cache_write.to_le_bytes());
+                buf.extend_from_slice(&r.output.to_le_bytes());
+                buf.push(r.flags & (REC_FLAG_PARTIAL | REC_FLAG_LEGACY));
             }
         }
     }
@@ -799,21 +1072,31 @@ pub(crate) fn atomic_write_cache_file(dir: &Path, file_name: &str, encoded: &[u8
     true
 }
 
-fn persist_binary_cache(dir: &Path, entries: &HashMap<(String, String), CachedFileEntry>) -> bool {
+fn persist_binary_cache(
+    dir: &Path,
+    entries: &HashMap<u16, HashMap<Box<str>, CachedFileEntry>>,
+    model_pool: &[String],
+    scope_pool: &[String],
+) -> bool {
     if !dir.is_dir() {
         return false;
     }
     let cache_path = dir.join(LEDGER_CACHE_FILE);
-    if entries.is_empty() && !cache_path.exists() {
+    let total_entries: usize = entries.values().map(|m| m.len()).sum();
+    if total_entries == 0 && !cache_path.exists() {
         return true;
     }
-    let mut sorted: Vec<&CachedFileEntry> = entries.values().collect();
-    sorted.sort_by(|a, b| {
-        a.scope
-            .cmp(&b.scope)
-            .then_with(|| a.file_name.cmp(&b.file_name))
-    });
-    let encoded = encode_binary_cache(&sorted);
+    let mut sorted: Vec<(&str, &str, &CachedFileEntry)> = Vec::with_capacity(total_entries);
+    for (&scope_idx, files) in entries {
+        let Some(scope) = scope_pool.get(scope_idx as usize) else {
+            continue;
+        };
+        for (file_name, entry) in files {
+            sorted.push((scope.as_str(), file_name.as_ref(), entry));
+        }
+    }
+    sorted.sort_by(|a, b| a.0.cmp(b.0).then_with(|| a.1.cmp(b.1)));
+    let encoded = encode_binary_cache(&sorted, model_pool);
     atomic_write_cache_file(dir, LEDGER_CACHE_FILE, &encoded)
 }
 
@@ -1045,6 +1328,14 @@ fn json_number_from_f64(v: f64) -> Number {
     }
 }
 
+struct ScannedLedgerFile {
+    name: String,
+    path: PathBuf,
+    mtime_ns: i128,
+    file_size: u64,
+    is_dirty: bool,
+}
+
 struct DirtyTask {
     scope: String,
     name: String,
@@ -1060,7 +1351,7 @@ struct AttributedRecord<'a> {
     user_name: String,
 }
 
-fn hash_opt_str(h: &mut Sha256, s: Option<&str>) {
+pub(crate) fn hash_opt_str(h: &mut Sha256, s: Option<&str>) {
     match s {
         Some(v) => {
             h.update([1u8]);
@@ -1072,14 +1363,14 @@ fn hash_opt_str(h: &mut Sha256, s: Option<&str>) {
     }
 }
 
-fn hash_opt_bool(h: &mut Sha256, v: Option<bool>) {
+pub(crate) fn hash_opt_bool(h: &mut Sha256, v: Option<bool>) {
     match v {
         Some(b) => h.update([1u8, if b { 1 } else { 0 }]),
         None => h.update([0u8]),
     }
 }
 
-fn hash_opt_f64(h: &mut Sha256, v: Option<f64>) {
+pub(crate) fn hash_opt_f64(h: &mut Sha256, v: Option<f64>) {
     match v {
         Some(f) => {
             h.update([1u8]);
@@ -1088,6 +1379,82 @@ fn hash_opt_f64(h: &mut Sha256, v: Option<f64>) {
         }
         None => h.update([0u8]),
     }
+}
+
+pub(crate) fn compute_known_accounts_hash(
+    known_accounts: &[(String, KnownAccountInfo)],
+) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update((known_accounts.len() as u32).to_le_bytes());
+    for (k, info) in known_accounts {
+        let kb = k.as_bytes();
+        h.update((kb.len() as u32).to_le_bytes());
+        h.update(kb);
+        hash_opt_str(&mut h, info.email.as_deref());
+        hash_opt_str(&mut h, info.name.as_deref());
+        hash_opt_bool(&mut h, info.primary);
+        hash_opt_bool(&mut h, info.secondary);
+        hash_opt_f64(&mut h, info.added_at);
+        hash_opt_f64(&mut h, info.created_at);
+    }
+    h.finalize().into()
+}
+
+pub(crate) fn pick_primary_scope(
+    scopes_list: &[String],
+    meta: &HashMap<String, KnownAccountInfo>,
+    known_map: &HashMap<String, &KnownAccountInfo>,
+    known_index: &HashMap<&str, usize>,
+) -> Option<String> {
+    if scopes_list.is_empty() {
+        return None;
+    }
+    let primary_rank = |s: &str| -> i32 {
+        let m = meta.get(s);
+        let k = known_map.get(s).copied();
+        if m.and_then(|v| v.primary) == Some(true) || k.and_then(|v| v.primary) == Some(true) {
+            return 0;
+        }
+        if m.and_then(|v| v.primary) == Some(false)
+            || k.and_then(|v| v.primary) == Some(false)
+            || m.and_then(|v| v.secondary) == Some(true)
+            || k.and_then(|v| v.secondary) == Some(true)
+        {
+            return 2;
+        }
+        if k.is_some() && known_index.get(s).copied().unwrap_or(0) > 0 {
+            return 2;
+        }
+        1
+    };
+    let mut sorted = scopes_list.to_vec();
+    sorted.sort_by(|a, b| {
+        let ra = primary_rank(a);
+        let rb = primary_rank(b);
+        if ra != rb {
+            return ra.cmp(&rb);
+        }
+        let ta = meta
+            .get(a)
+            .and_then(|v| v.added_at.or(v.created_at))
+            .unwrap_or(MAX_SAFE_INT as f64);
+        let tb = meta
+            .get(b)
+            .and_then(|v| v.added_at.or(v.created_at))
+            .unwrap_or(MAX_SAFE_INT as f64);
+        if ta != tb {
+            return ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal);
+        }
+        let ia = known_index.get(a.as_str()).copied();
+        let ib = known_index.get(b.as_str()).copied();
+        if let (Some(i_a), Some(i_b)) = (ia, ib) {
+            if i_a != i_b {
+                return i_a.cmp(&i_b);
+            }
+        }
+        a.cmp(b)
+    });
+    sorted.into_iter().next()
 }
 
 fn compute_summary_snapshot_sig(query: &LedgerSummaryQuery) -> [u8; 32] {
@@ -1130,18 +1497,7 @@ fn compute_summary_snapshot_sig(query: &LedgerSummaryQuery) -> [u8; 32] {
         }
         None => h.update([0u8]),
     }
-    h.update((query.known_accounts.len() as u32).to_le_bytes());
-    for (k, info) in &query.known_accounts {
-        let kb = k.as_bytes();
-        h.update((kb.len() as u32).to_le_bytes());
-        h.update(kb);
-        hash_opt_str(&mut h, info.email.as_deref());
-        hash_opt_str(&mut h, info.name.as_deref());
-        hash_opt_bool(&mut h, info.primary);
-        hash_opt_bool(&mut h, info.secondary);
-        hash_opt_f64(&mut h, info.added_at);
-        hash_opt_f64(&mut h, info.created_at);
-    }
+    h.update(compute_known_accounts_hash(&query.known_accounts));
     h.finalize().into()
 }
 
@@ -1200,47 +1556,10 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
 
     let cache_path = dir.join(LEDGER_CACHE_FILE);
     let (bin_mtime_ns, bin_size) = read_cache_file_stamp(&cache_path);
-    let mem_hit = if bin_size.is_none() || bin_mtime_ns.is_some() {
-        let guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_ref().and_then(|c| {
-            if c.directory == query.directory
-                && c.bin_mtime_ns == bin_mtime_ns
-                && c.bin_size == bin_size
-            {
-                Some(Arc::clone(&c.entries))
-            } else {
-                None
-            }
-        })
-    } else {
-        None
-    };
+    let bin_stamp_valid = bin_size.is_none() || bin_mtime_ns.is_some();
 
-    let was_mem_hit = mem_hit.is_some();
-    let (mut cache_arc, mut cache_dirty) = match mem_hit {
-        Some(arc) => (arc, false),
-        None => {
-            let (map, dirty) = load_binary_cache(&cache_path);
-            (Arc::new(map), dirty)
-        }
-    };
-
-    let mut any_removed_or_missing = false;
-    let needs_retain = cache_arc.keys().any(|(s, _)| {
-        !(scan_scope_set.contains(s) || all_scope_set.contains(s) || target_set.contains(s))
-    });
-    if needs_retain {
-        let cache_map = Arc::make_mut(&mut cache_arc);
-        cache_map.retain(|(s, _), _| {
-            scan_scope_set.contains(s) || all_scope_set.contains(s) || target_set.contains(s)
-        });
-        cache_dirty = true;
-        any_removed_or_missing = true;
-    }
-
-    let mut scope_files: Vec<(String, Vec<String>)> = Vec::with_capacity(scan_scopes.len());
-    let mut dirty_tasks: Vec<DirtyTask> = Vec::new();
-
+    let mut scanned_scopes: Vec<(String, Vec<ScannedLedgerFile>)> =
+        Vec::with_capacity(scan_scopes.len());
     for s in &scan_scopes {
         let scope_dir = dir.join(s);
         let mut valid_files = Vec::new();
@@ -1261,91 +1580,178 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
             Err(_) => return None,
         }
         valid_files.sort();
-        let valid_set: HashSet<&str> = valid_files.iter().map(|n| n.as_str()).collect();
-
-        let has_removed = cache_arc
-            .keys()
-            .any(|(cs, cname)| cs == s && !valid_set.contains(cname.as_str()));
-        if has_removed {
-            let keys_to_remove: Vec<(String, String)> = cache_arc
-                .keys()
-                .filter(|(cs, cname)| cs == s && !valid_set.contains(cname.as_str()))
-                .cloned()
-                .collect();
-            let cache_map = Arc::make_mut(&mut cache_arc);
-            for k in keys_to_remove {
-                cache_map.remove(&k);
-                cache_dirty = true;
-            }
-            any_removed_or_missing = true;
-        }
-
-        let mut existing_files = Vec::with_capacity(valid_files.len());
+        let mut files_meta = Vec::with_capacity(valid_files.len());
         for name in valid_files {
             let full_path = scope_dir.join(&name);
-            let meta_res = fs::metadata(&full_path);
-            let file_meta = match meta_res {
+            let file_meta = match fs::metadata(&full_path) {
                 Ok(m) => m,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    let key = (s.clone(), name);
-                    if cache_arc.contains_key(&key) {
-                        Arc::make_mut(&mut cache_arc).remove(&key);
-                        cache_dirty = true;
-                    }
-                    any_removed_or_missing = true;
-                    continue;
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(_) => return None,
             };
             let mtime_ns = mtime_ns_from_metadata(&file_meta)?;
             let file_size = file_meta.len();
             let rel_path = format!("{s}/{name}");
             let is_dirty = dirty_set.contains(&rel_path);
-            let cache_hit = !is_dirty
-                && cache_arc
-                    .get(&(s.clone(), name.clone()))
-                    .is_some_and(|e| e.mtime_ns == mtime_ns && e.file_size == file_size);
-            if !cache_hit {
-                dirty_tasks.push(DirtyTask {
-                    scope: s.clone(),
-                    name: name.clone(),
-                    path: full_path,
-                    mtime_ns,
-                    file_size,
-                });
-            }
-            existing_files.push(name);
+            files_meta.push(ScannedLedgerFile {
+                name,
+                path: full_path,
+                mtime_ns,
+                file_size,
+                is_dirty,
+            });
         }
-        scope_files.push((s.clone(), existing_files));
+        scanned_scopes.push((s.clone(), files_meta));
     }
 
     let stamps_valid = (accounts_stamp.1.is_none() || accounts_stamp.0.is_some())
         && (ownership_stamp.1.is_none() || ownership_stamp.0.is_some());
 
-    if was_mem_hit
-        && !cache_dirty
-        && !any_removed_or_missing
-        && dirty_tasks.is_empty()
-        && stamps_valid
-    {
+    let scope_allowed = |s: &str| -> bool {
+        scan_scope_set.contains(s) || all_scope_set.contains(s) || target_set.contains(s)
+    };
+
+    let mut hot_mem: Option<(
+        Arc<HashMap<u16, HashMap<Box<str>, CachedFileEntry>>>,
+        Vec<String>,
+        Vec<String>,
+    )> = None;
+
+    if bin_stamp_valid {
         let mut guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = guard.as_mut() {
             if c.directory == query.directory
                 && c.bin_mtime_ns == bin_mtime_ns
                 && c.bin_size == bin_size
             {
-                if let Some(snap) = c.last_snapshot.as_mut() {
-                    if snap.snapshot_sig == snapshot_sig
-                        && snap.accounts_stamp == accounts_stamp
-                        && snap.ownership_stamp == ownership_stamp
-                        && snap.all_scopes == all_scopes
-                    {
-                        snap.snapshot.updated_at = updated_at;
-                        return serde_json::to_string(&snap.snapshot).ok();
+                let (needs_retain, all_files_match) = if c.soft_released {
+                    let retain = c.file_stamps.keys().any(|s| !scope_allowed(s));
+                    let files_ok = scanned_scopes.iter().all(|(s, files)| {
+                        let stamp_map = c.file_stamps.get(s.as_str());
+                        let expected_len = stamp_map.map(|m| m.len()).unwrap_or(0);
+                        expected_len == files.len()
+                            && files.iter().all(|f| {
+                                !f.is_dirty
+                                    && stamp_map.and_then(|m| m.get(f.name.as_str()))
+                                        == Some(&(f.mtime_ns, f.file_size))
+                            })
+                    });
+                    (retain, files_ok)
+                } else {
+                    let retain = c.entries.keys().any(|&s_idx| {
+                        c.scope_pool
+                            .get(s_idx as usize)
+                            .is_none_or(|s| !scope_allowed(s))
+                    });
+                    let files_ok = scanned_scopes.iter().all(|(s, files)| {
+                        let scope_entries = c
+                            .scope_pool
+                            .iter()
+                            .position(|x| x == s)
+                            .and_then(|idx| c.entries.get(&(idx as u16)));
+                        let expected_len = scope_entries.map(|m| m.len()).unwrap_or(0);
+                        expected_len == files.len()
+                            && files.iter().all(|f| {
+                                !f.is_dirty
+                                    && scope_entries.and_then(|m| m.get(f.name.as_str())).is_some_and(
+                                        |e| e.mtime_ns == f.mtime_ns && e.file_size == f.file_size,
+                                    )
+                            })
+                    });
+                    (retain, files_ok)
+                };
+
+                if !needs_retain && all_files_match && stamps_valid {
+                    if let Some(snap) = c.last_snapshot.as_mut() {
+                        if snap.snapshot_sig == snapshot_sig
+                            && snap.accounts_stamp == accounts_stamp
+                            && snap.ownership_stamp == ownership_stamp
+                            && snap.all_scopes == all_scopes
+                        {
+                            snap.snapshot.updated_at = updated_at;
+                            return serde_json::to_string(&snap.snapshot).ok();
+                        }
                     }
+                }
+
+                if !c.soft_released {
+                    hot_mem = Some((
+                        Arc::clone(&c.entries),
+                        c.model_pool.clone(),
+                        c.scope_pool.clone(),
+                    ));
                 }
             }
         }
+    }
+
+    let was_mem_hit = hot_mem.is_some();
+    let (mut cache_arc, mut model_interner, mut scope_interner, mut cache_dirty) = match hot_mem {
+        Some((arc, mpool, spool)) => (
+            arc,
+            StringPoolBuilder::from_pool(mpool),
+            StringPoolBuilder::from_pool(spool),
+            false,
+        ),
+        None => {
+            let (map, m_builder, s_builder, dirty) = load_binary_cache(&cache_path);
+            (Arc::new(map), m_builder, s_builder, dirty)
+        }
+    };
+
+    let stale_scope_idxs: Vec<u16> = cache_arc
+        .keys()
+        .copied()
+        .filter(|&s_idx| {
+            scope_interner
+                .pool
+                .get(s_idx as usize)
+                .is_none_or(|s| !scope_allowed(s))
+        })
+        .collect();
+    if !stale_scope_idxs.is_empty() {
+        let cache_map = Arc::make_mut(&mut cache_arc);
+        for s_idx in stale_scope_idxs {
+            cache_map.remove(&s_idx);
+            cache_dirty = true;
+        }
+    }
+
+    let mut scope_files: Vec<(u16, String, Vec<String>)> = Vec::with_capacity(scanned_scopes.len());
+    let mut dirty_tasks: Vec<DirtyTask> = Vec::new();
+
+    for (s, files) in scanned_scopes {
+        let s_idx = scope_interner.intern(&s)?;
+        let valid_set: HashSet<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        let has_removed = cache_arc
+            .get(&s_idx)
+            .is_some_and(|m| m.keys().any(|cname| !valid_set.contains(cname.as_ref())));
+        if has_removed {
+            let cache_map = Arc::make_mut(&mut cache_arc);
+            if let Some(scope_map) = cache_map.get_mut(&s_idx) {
+                scope_map.retain(|cname, _| valid_set.contains(cname.as_ref()));
+                cache_dirty = true;
+            }
+        }
+
+        let mut existing_files = Vec::with_capacity(files.len());
+        let scope_entries = cache_arc.get(&s_idx);
+        for f in files {
+            let cache_hit = !f.is_dirty
+                && scope_entries
+                    .and_then(|m| m.get(f.name.as_str()))
+                    .is_some_and(|e| e.mtime_ns == f.mtime_ns && e.file_size == f.file_size);
+            if !cache_hit {
+                dirty_tasks.push(DirtyTask {
+                    scope: s.clone(),
+                    name: f.name.clone(),
+                    path: f.path,
+                    mtime_ns: f.mtime_ns,
+                    file_size: f.file_size,
+                });
+            }
+            existing_files.push(f.name);
+        }
+        scope_files.push((s_idx, s, existing_files));
     }
 
     let meta = load_accounts_meta(dir).ok()?;
@@ -1388,7 +1794,6 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                             let task = &dirty_tasks[idx];
                             let status = parse_ledger_file(
                                 &task.scope,
-                                &task.name,
                                 &task.path,
                                 task.mtime_ns,
                                 task.file_size,
@@ -1413,7 +1818,6 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
             for (idx, task) in dirty_tasks.iter().enumerate() {
                 let status = parse_ledger_file(
                     &task.scope,
-                    &task.name,
                     &task.path,
                     task.mtime_ns,
                     task.file_size,
@@ -1430,14 +1834,21 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
         }
         let cache_map = Arc::make_mut(&mut cache_arc);
         for (idx, task) in dirty_tasks.into_iter().enumerate() {
+            let s_idx = scope_interner.intern(&task.scope)?;
             match results[idx].take()? {
-                ParseFileStatus::Parsed(entry) => {
-                    cache_map.insert((task.scope, task.name), entry);
+                ParseFileStatus::Parsed(parsed) => {
+                    let entry = intern_parsed_entry(parsed, &mut model_interner)?;
+                    cache_map
+                        .entry(s_idx)
+                        .or_default()
+                        .insert(task.name.into_boxed_str(), entry);
                     cache_dirty = true;
                 }
                 ParseFileStatus::Missing => {
-                    if cache_map.remove(&(task.scope, task.name)).is_some() {
-                        cache_dirty = true;
+                    if let Some(scope_map) = cache_map.get_mut(&s_idx) {
+                        if scope_map.remove(task.name.as_str()).is_some() {
+                            cache_dirty = true;
+                        }
                     }
                 }
                 ParseFileStatus::TransientError => return None,
@@ -1445,8 +1856,14 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
         }
     }
 
+    if cache_dirty {
+        shrink_entries_map(Arc::make_mut(&mut cache_arc));
+    }
+    let model_pool = model_interner.into_pool();
+    let scope_pool = scope_interner.into_pool();
+
     let (cache_ok_for_mem, final_bin_mtime_ns, final_bin_size) = if cache_dirty {
-        let persisted = persist_binary_cache(dir, &cache_arc);
+        let persisted = persist_binary_cache(dir, &cache_arc, &model_pool, &scope_pool);
         let (new_mtime_ns, new_size) = read_cache_file_stamp(&cache_path);
         let ok = persisted && (new_size.is_none() || new_mtime_ns.is_some());
         let mut guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -1455,41 +1872,48 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 directory: query.directory.clone(),
                 bin_mtime_ns: new_mtime_ns,
                 bin_size: new_size,
+                model_pool: model_pool.clone(),
+                scope_pool: scope_pool.clone(),
                 entries: Arc::clone(&cache_arc),
+                file_stamps: HashMap::new(),
+                soft_released: false,
                 last_snapshot: None,
             });
         } else if guard.as_ref().is_some_and(|c| c.directory == query.directory) {
             *guard = None;
         }
         (ok, new_mtime_ns, new_size)
-    } else if !was_mem_hit && (bin_size.is_none() || bin_mtime_ns.is_some()) {
+    } else if !was_mem_hit && bin_stamp_valid {
         let mut guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(InMemLedgerCache {
             directory: query.directory.clone(),
             bin_mtime_ns,
             bin_size,
+            model_pool: model_pool.clone(),
+            scope_pool: scope_pool.clone(),
             entries: Arc::clone(&cache_arc),
+            file_stamps: HashMap::new(),
+            soft_released: false,
             last_snapshot: None,
         });
         (true, bin_mtime_ns, bin_size)
     } else {
-        (
-            bin_size.is_none() || bin_mtime_ns.is_some(),
-            bin_mtime_ns,
-            bin_size,
-        )
+        (bin_stamp_valid, bin_mtime_ns, bin_size)
     };
 
     let cache_map = &*cache_arc;
 
-    let mut record_scopes: HashMap<String, Vec<String>> = HashMap::new();
-    let mut parsed_entries: Vec<&CachedFileEntry> = Vec::new();
+    let mut record_scopes: HashMap<RecordId, Vec<String>> = HashMap::new();
+    let mut parsed_entries: Vec<(&str, &str, &CachedFileEntry)> = Vec::new();
     let mut unreadable: i64 = 0;
 
-    for (s, files) in &scope_files {
+    for (s_idx, s, files) in &scope_files {
         let is_target = target_set.contains(s);
+        let Some(scope_entries) = cache_map.get(s_idx) else {
+            continue;
+        };
         for name in files {
-            let Some(entry) = cache_map.get(&(s.clone(), name.clone())) else {
+            let Some(entry) = scope_entries.get(name.as_str()) else {
                 continue;
             };
             if entry.unreadable {
@@ -1498,9 +1922,9 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 }
                 continue;
             }
-            let mut seen_rids = HashSet::new();
+            let mut seen_rids: HashSet<&RecordId> = HashSet::new();
             for r in &entry.records {
-                if seen_rids.insert(r.id.as_str()) {
+                if seen_rids.insert(&r.id) {
                     let list = record_scopes.entry(r.id.clone()).or_default();
                     if !list.iter().any(|existing| existing == s) {
                         list.push(s.clone());
@@ -1508,7 +1932,7 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 }
             }
             if is_target {
-                parsed_entries.push(entry);
+                parsed_entries.push((s.as_str(), name.as_str(), entry));
             }
         }
     }
@@ -1538,65 +1962,15 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
         format!("Account ({})", &s[..8.min(s.len())])
     };
 
-    let primary_rank = |s: &str| -> i32 {
-        let m = meta.get(s);
-        let k = known_map.get(s).copied();
-        if m.and_then(|v| v.primary) == Some(true) || k.and_then(|v| v.primary) == Some(true) {
-            return 0;
-        }
-        if m.and_then(|v| v.primary) == Some(false)
-            || k.and_then(|v| v.primary) == Some(false)
-            || m.and_then(|v| v.secondary) == Some(true)
-            || k.and_then(|v| v.secondary) == Some(true)
-        {
-            return 2;
-        }
-        if k.is_some() && known_index.get(s).copied().unwrap_or(0) > 0 {
-            return 2;
-        }
-        1
-    };
-
     let pick_primary = |scopes_list: &[String]| -> Option<String> {
-        if scopes_list.is_empty() {
-            return None;
-        }
-        let mut sorted = scopes_list.to_vec();
-        sorted.sort_by(|a, b| {
-            let ra = primary_rank(a);
-            let rb = primary_rank(b);
-            if ra != rb {
-                return ra.cmp(&rb);
-            }
-            let ta = meta
-                .get(a)
-                .and_then(|v| v.added_at.or(v.created_at))
-                .unwrap_or(f64::MAX);
-            let tb = meta
-                .get(b)
-                .and_then(|v| v.added_at.or(v.created_at))
-                .unwrap_or(f64::MAX);
-            if ta != tb {
-                return ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal);
-            }
-            let ia = known_index.get(a.as_str()).copied();
-            let ib = known_index.get(b.as_str()).copied();
-            if let (Some(i_a), Some(i_b)) = (ia, ib) {
-                if i_a != i_b {
-                    return i_a.cmp(&i_b);
-                }
-            }
-            a.cmp(b)
-        });
-        sorted.into_iter().next()
+        pick_primary_scope(scopes_list, &meta, &known_map, &known_index)
     };
 
     let mut manual_entries: Vec<ManualUsageRecordOut> = Vec::new();
-    let mut seen_map: HashMap<String, usize> = HashMap::new();
+    let mut seen_map: HashMap<RecordId, usize> = HashMap::new();
     let mut seen_vec: Vec<AttributedRecord<'_>> = Vec::new();
 
-    for entry in parsed_entries {
-        let s = entry.scope.as_str();
+    for (s, file_name, entry) in parsed_entries {
         if let Some(m) = &entry.manual_meta {
             let tokens_val: Value = if m.tokens_json.is_empty() {
                 serde_json::json!({ "prompt": 0, "candidates": 0, "total": 0 })
@@ -1606,10 +1980,9 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
             };
             manual_entries.push(ManualUsageRecordOut {
                 id: m.doc_id.clone(),
-                hash: entry
-                    .file_name
+                hash: file_name
                     .strip_suffix(".json")
-                    .unwrap_or(&entry.file_name)
+                    .unwrap_or(file_name)
                     .to_string(),
                 account: s.to_string(),
                 timestamp: json_number_from_f64(m.timestamp),
@@ -1621,9 +1994,9 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 ts_sort: m.timestamp,
             });
         }
-        let explicit_owner = owner_by_name.get(&entry.file_name).map(|v| v.as_str());
+        let explicit_owner = owner_by_name.get(file_name).map(|v| v.as_str());
         for r in &entry.records {
-            let single_scope = [entry.scope.clone()];
+            let single_scope = [s.to_string()];
             let scopes_for_record: &[String] = record_scopes
                 .get(&r.id)
                 .map(|v| v.as_slice())
@@ -1660,7 +2033,7 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 if r_sum > prev_sum {
                     seen_vec[idx] = AttributedRecord {
                         rec: r,
-                        is_legacy: is_legacy || r.is_legacy,
+                        is_legacy: is_legacy || r.is_legacy(),
                         user_key,
                         user_name,
                     };
@@ -1677,7 +2050,7 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 seen_map.insert(r.id.clone(), idx);
                 seen_vec.push(AttributedRecord {
                     rec: r,
-                    is_legacy: is_legacy || r.is_legacy,
+                    is_legacy: is_legacy || r.is_legacy(),
                     user_key,
                     user_name,
                 });
@@ -1686,7 +2059,7 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
     }
 
     let mut daily: BTreeMap<String, UsageDayBucketOut> = BTreeMap::new();
-    let mut models_set: HashSet<String> = HashSet::new();
+    let mut models_set: HashSet<u16> = HashSet::new();
     let mut users_order: Vec<String> = Vec::new();
     let mut users_seen: HashSet<String> = HashSet::new();
     let mut unknown_tokens: i64 = 0;
@@ -1696,7 +2069,7 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
 
     for attr in &seen_vec {
         let r = attr.rec;
-        models_set.insert(r.model.clone());
+        models_set.insert(r.model_idx);
         if users_seen.insert(attr.user_key.clone()) {
             users_order.push(attr.user_key.clone());
         }
@@ -1704,14 +2077,15 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
         if attr.is_legacy {
             legacy_tokens = legacy_tokens.saturating_add(token_sum);
         }
-        if r.partial {
+        if r.is_partial() {
             partial_requests += 1;
         }
-        let Some(at_ms) = r.at else {
+        if r.at < 0 {
             unknown_tokens = unknown_tokens.saturating_add(token_sum);
             unknown_requests += 1;
             continue;
-        };
+        }
+        let at_ms = r.at;
         let (date, hour) = date_time_parts(&query, at_ms)?;
         let day = daily.entry(date.clone()).or_insert_with(|| UsageDayBucketOut {
             date,
@@ -1727,21 +2101,25 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
             day.legacy_tokens = day.legacy_tokens.saturating_add(token_sum);
         }
 
-        let mb = day
-            .models
-            .entry(r.model.clone())
-            .or_insert(UsageBucketCountsOut {
-                uncached: 0,
-                cache_read: 0,
-                cache_write: 0,
-                output: 0,
-                total: 0,
-                requests: 0,
-            });
-        mb.uncached = mb.uncached.saturating_add(r.uncached.unwrap_or(0));
-        mb.cache_read = mb.cache_read.saturating_add(r.cache_read.unwrap_or(0));
-        mb.cache_write = mb.cache_write.saturating_add(r.cache_write.unwrap_or(0));
-        mb.output = mb.output.saturating_add(r.output.unwrap_or(0));
+        let model_name = model_pool.get(r.model_idx as usize)?.as_str();
+        let mb = if let Some(existing) = day.models.get_mut(model_name) {
+            existing
+        } else {
+            day.models
+                .entry(model_name.to_string())
+                .or_insert(UsageBucketCountsOut {
+                    uncached: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                    output: 0,
+                    total: 0,
+                    requests: 0,
+                })
+        };
+        mb.uncached = mb.uncached.saturating_add(nn_i64(r.uncached));
+        mb.cache_read = mb.cache_read.saturating_add(nn_i64(r.cache_read));
+        mb.cache_write = mb.cache_write.saturating_add(nn_i64(r.cache_write));
+        mb.output = mb.output.saturating_add(nn_i64(r.output));
         mb.total = mb.total.saturating_add(token_sum);
         mb.requests += 1;
 
@@ -1759,10 +2137,10 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
                 total: 0,
                 requests: 0,
             });
-        ub.uncached = ub.uncached.saturating_add(r.uncached.unwrap_or(0));
-        ub.cache_read = ub.cache_read.saturating_add(r.cache_read.unwrap_or(0));
-        ub.cache_write = ub.cache_write.saturating_add(r.cache_write.unwrap_or(0));
-        ub.output = ub.output.saturating_add(r.output.unwrap_or(0));
+        ub.uncached = ub.uncached.saturating_add(nn_i64(r.uncached));
+        ub.cache_read = ub.cache_read.saturating_add(nn_i64(r.cache_read));
+        ub.cache_write = ub.cache_write.saturating_add(nn_i64(r.cache_write));
+        ub.output = ub.output.saturating_add(nn_i64(r.output));
         ub.total = ub.total.saturating_add(token_sum);
         ub.requests += 1;
     }
@@ -1838,7 +2216,10 @@ pub fn query_usage_ledger_summary_json(query_json: &str) -> Option<String> {
         }
     }
 
-    let mut models: Vec<String> = models_set.into_iter().collect();
+    let mut models: Vec<String> = models_set
+        .into_iter()
+        .filter_map(|idx| model_pool.get(idx as usize).cloned())
+        .collect();
     models.sort();
 
     let today_tokens: i64 = days
@@ -2014,6 +2395,7 @@ mod tests {
 
     #[test]
     fn test_binary_cache_cold_warm_corrupt_dirty_and_delete() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("cache");
         let scope_a = hex64('a');
         let rid1 = hex64('1');
@@ -2133,6 +2515,7 @@ mod tests {
 
     #[test]
     fn test_parallel_dirty_and_multi_account_ownership_and_manual() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("multi");
         let scope_a = hex64('a');
         let scope_b = hex64('b');
@@ -2291,6 +2674,7 @@ mod tests {
 
     #[test]
     fn test_in_mem_ledger_cache_invalidation() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("mem-cache");
         let scope_a = hex64('a');
         let rid1 = hex64('1');
@@ -2393,6 +2777,7 @@ mod tests {
 
     #[test]
     fn test_in_mem_snapshot_cache_invalidation_and_updated_at() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("snap-cache");
         let scope_a = hex64('a');
         let scope_b = hex64('b');
@@ -2539,6 +2924,234 @@ mod tests {
                 .unwrap();
         assert_eq!(out_k2["userMeta"][&scope_b]["email"], "beta-known-2@example.test");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_compact_record_id_flags_sentinels_and_interning() {
+        let hex_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let rid_sha = RecordId::from_str_id(hex_id);
+        assert!(matches!(rid_sha, RecordId::Sha256(_)));
+        assert_eq!(rid_sha.to_string_id(), hex_id);
+
+        // Non-64-hex or uppercase hex preserves exact string via Raw(Box<str>)
+        let upper_id = "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef";
+        let rid_raw = RecordId::from_str_id(upper_id);
+        assert!(matches!(rid_raw, RecordId::Raw(_)));
+        assert_eq!(rid_raw.to_string_id(), upper_id);
+
+        let mut bin_out = Vec::new();
+        rid_sha.write_bin_str(&mut bin_out);
+        let mut cur = BinCursor::new(&bin_out);
+        assert_eq!(cur.read_str().as_deref(), Some(hex_id));
+
+        let mut pool = StringPoolBuilder::new();
+        let idx1 = pool.intern("Gemini 3.8 Flash").unwrap();
+        let idx2 = pool.intern("Claude 4.5 Sonnet").unwrap();
+        let idx1_again = pool.intern("Gemini 3.8 Flash").unwrap();
+        assert_eq!(idx1, idx1_again);
+        assert_ne!(idx1, idx2);
+        let finalized = pool.into_pool();
+        assert_eq!(finalized, vec!["Gemini 3.8 Flash", "Claude 4.5 Sonnet"]);
+
+        let rec = PackedUsageRecord {
+            id: rid_sha,
+            at: -1,
+            uncached: -1,
+            cache_read: 120,
+            cache_write: -1,
+            output: 30,
+            model_idx: idx1,
+            flags: REC_FLAG_PARTIAL | REC_FLAG_LEGACY,
+        };
+        assert_eq!(rec.sum(), 150);
+        assert!(rec.is_partial());
+        assert!(rec.is_legacy());
+        assert_eq!(validate_cached_sentinel_i64(-1), Some(-1));
+        assert_eq!(validate_cached_sentinel_i64(0), Some(0));
+        assert!(validate_cached_sentinel_i64(-2).is_none());
+        assert!(validate_cached_sentinel_i64(MAX_SAFE_INT + 1).is_none());
+    }
+
+    #[test]
+    fn test_release_ledger_mem_cache_soft_snapshot_hit_reload_and_full() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        release_ledger_mem_cache("full");
+
+        let dir = temp_dir("release-modes");
+        let scope_a = hex64('a');
+        let rid1 = hex64('1');
+        let rid2 = hex64('2');
+        let fhash1 = hex64('b');
+        let fhash2 = hex64('c');
+
+        let f1 = write_ledger_doc(
+            &dir,
+            &scope_a,
+            &fhash1,
+            serde_json::json!([{
+                "id": rid1,
+                "at": 1791684000000i64,
+                "model": "Gemini 3.8",
+                "uncached": 100,
+                "cacheRead": 200,
+                "cacheWrite": 0,
+                "output": 50,
+                "partial": false
+            }]),
+            None,
+        );
+
+        let mut query = serde_json::json!({
+            "directory": dir.to_string_lossy(),
+            "scope": scope_a,
+            "nowMs": 1791684000000i64,
+            "today": "2026-10-11",
+            "timeZone": "Asia/Shanghai",
+            "source": "desktop-local",
+            "knownAccounts": {},
+            "fixedOffsetSecs": 28800,
+            "dirtyRelPaths": []
+        });
+
+        let out1: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&query.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out1["totalTokens"], 350);
+
+        {
+            let guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            let c = guard.as_ref().unwrap();
+            assert!(!c.soft_released);
+            assert!(!c.entries.is_empty());
+            assert_eq!(c.model_pool, vec!["Gemini 3.8".to_string()]);
+            assert_eq!(c.scope_pool, vec![scope_a.clone()]);
+        }
+
+        // Soft release clears raw entries & intern pools, keeps last_snapshot + file_stamps
+        assert!(release_ledger_mem_cache("soft"));
+        assert!(!release_ledger_mem_cache("soft")); // idempotent
+        assert!(!release_ledger_mem_cache("invalid"));
+
+        {
+            let guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            let c = guard.as_ref().unwrap();
+            assert!(c.soft_released);
+            assert!(c.entries.is_empty());
+            assert!(c.model_pool.is_empty());
+            assert!(c.scope_pool.is_empty());
+            assert!(c.last_snapshot.is_some());
+            assert_eq!(
+                c.file_stamps
+                    .get(scope_a.as_str())
+                    .map(|m| m.len())
+                    .unwrap_or(0),
+                1
+            );
+        }
+
+        // Query again with new nowMs and unchanged disk files -> hits last_snapshot without reloading entries!
+        query["nowMs"] = serde_json::json!(1791687600000i64);
+        let out_soft_hit: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&query.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out_soft_hit["totalTokens"], 350);
+        assert_eq!(out_soft_hit["updatedAt"], "2026-10-11T03:00:00.000Z");
+
+        {
+            let guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            let c = guard.as_ref().unwrap();
+            assert!(c.soft_released, "unchanged disk must stay soft-released on snapshot hit");
+            assert!(c.entries.is_empty());
+        }
+
+        // Query with different `today` misses last_snapshot -> reloads cleanly from ledger-compact-v1.bin
+        let mut q_day2 = query.clone();
+        q_day2["today"] = serde_json::json!("2026-10-12");
+        let out_reloaded_bin: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&q_day2.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out_reloaded_bin["totalTokens"], 350);
+        assert_eq!(out_reloaded_bin["todayTokens"], 0);
+        {
+            let guard = LEDGER_MEM_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            let c = guard.as_ref().unwrap();
+            assert!(!c.soft_released);
+            assert!(!c.entries.is_empty());
+        }
+
+        // Soft release again, then add a new file on disk -> detects disk change & reloads cleanly
+        assert!(release_ledger_mem_cache("soft"));
+        write_ledger_doc(
+            &dir,
+            &scope_a,
+            &fhash2,
+            serde_json::json!([{
+                "id": rid2,
+                "at": 1791684000000i64,
+                "model": "Claude 4.5",
+                "uncached": 40,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "output": 10,
+                "partial": false
+            }]),
+            None,
+        );
+        let out_disk_add: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&query.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out_disk_add["totalTokens"], 400);
+        assert_eq!(out_disk_add["requests"], 2);
+
+        // Soft release again, then modify f1 same-size with dirtyRelPaths -> detects dirty & reloads
+        assert!(release_ledger_mem_cache("soft"));
+        write_ledger_doc(
+            &dir,
+            &scope_a,
+            &fhash1,
+            serde_json::json!([{
+                "id": rid1,
+                "at": 1791684000000i64,
+                "model": "Gemini 3.8",
+                "uncached": 500,
+                "cacheRead": 200,
+                "cacheWrite": 0,
+                "output": 50,
+                "partial": false
+            }]),
+            None,
+        );
+        let mut q_dirty = query.clone();
+        q_dirty["dirtyRelPaths"] = serde_json::json!([format!("{scope_a}/{fhash1}.json")]);
+        let out_dirty: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&q_dirty.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out_dirty["totalTokens"], 800);
+
+        // Delete f1 after soft release -> detects deletion & updates totals
+        assert!(release_ledger_mem_cache("soft"));
+        fs::remove_file(&f1).unwrap();
+        let out_del: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&query.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out_del["totalTokens"], 50);
+
+        // Full release clears entire LEDGER_MEM_CACHE
+        assert!(release_ledger_mem_cache("full"));
+        assert!(!release_ledger_mem_cache("full"));
+        assert!(LEDGER_MEM_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none());
+
+        // Subsequent query after full release rebuilds cleanly
+        let out_after_full: Value =
+            serde_json::from_str(&query_usage_ledger_summary_json(&query.to_string()).unwrap())
+                .unwrap();
+        assert_eq!(out_after_full["totalTokens"], 50);
+
+        release_ledger_mem_cache("full");
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -69,7 +69,7 @@ function initMcpUsageApp(): void {
   shadowRoot.append(statusStyle, statusWrap);
 
   const i18n = createDashboardI18n(detectLocaleLanguage());
-  const app = new App({ name: 'Antigrative Dashboard', version: '0.12.7' }, {});
+  const app = new App({ name: 'Antigrative Dashboard', version: '0.12.8' }, {});
   const bridge = createMcpUsageBridge(app);
 
   let dashboard: UsageDashboardHandle | null = null;

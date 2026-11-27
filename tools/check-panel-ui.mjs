@@ -6,6 +6,7 @@ import {dirname,join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {bindWindowFactory} from '../compat/runtime-ui.mjs';
 import {panelAppSource,panelPageSource} from '../sidecars/panel/panel-source.mjs';
 import {trajectoryMetrics} from '../sidecars/panel/metrics.mjs';
 import {isDirectEntry,launchTestBrowser} from './ui-runner.mjs';
@@ -98,6 +99,7 @@ const server=createServer(async(req,res)=>{
   res.end(JSON.stringify(prefs));return;
  }
  if(path==='/app.js'){res.setHeader('Content-Type','application/javascript');res.end(url.searchParams.has('v')?code:'throw new Error("Fixture stale unversioned script");');return;}
+ if(path==='/usage-ui.js'){res.setHeader('Content-Type','application/javascript; charset=utf-8');res.end(bindWindowFactory('__agPulseUsageFactory',await readFile(join(repo,'compat/usage-ui.cjs'),'utf8'),'usage-ui'));return;}
  if(path==='/styles.css'){res.setHeader('Content-Type','text/css');res.end(url.searchParams.has('v')?await readFile(join(repo,'sidecars/panel/styles.css')):'');return;}
  if(path==='/theme.css'){res.setHeader('Content-Type','text/css');res.end(createTheme().css(':root'));return;}
  if(path==='/logo.svg'){res.setHeader('Content-Type','image/svg+xml');res.end(await readFile(join(repo,'assets/logo.svg')));return;}

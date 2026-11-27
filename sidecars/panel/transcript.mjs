@@ -344,19 +344,22 @@ var TranscriptReader = class {
   bytesPerPass;
   passMs;
   nativeScan;
+  now;
   entries = /* @__PURE__ */ new Map();
   generation = 0;
   running = null;
   nextImmediate = null;
+  #activeEntryKey = null;
   #lastContinuedKey = null;
   #drainWaiters = /* @__PURE__ */ new Set();
-  constructor({ root = transcriptBrainRoot(), maxEntries = 8, maxRows = 8192, bytesPerPass = 2 * 1024 * 1024, passMs = 100, nativeScan = null } = {}) {
+  constructor({ root = transcriptBrainRoot(), maxEntries = 8, maxRows = 8192, bytesPerPass = 2 * 1024 * 1024, passMs = 100, nativeScan = null, now = Date.now } = {}) {
     this.root = root;
     this.maxEntries = isNonNegInt(maxEntries) && maxEntries > 0 ? Math.min(8, maxEntries) : 8;
     this.maxRows = isNonNegInt(maxRows) && maxRows > 0 ? Math.min(8192, maxRows) : 8192;
     this.bytesPerPass = isNonNegInt(bytesPerPass) ? Math.max(65536, Math.min(2 * 1024 * 1024, bytesPerPass)) : 2 * 1024 * 1024;
     this.passMs = isNonNegInt(passMs) ? Math.max(1, Math.min(100, passMs)) : 100;
     this.nativeScan = typeof nativeScan === "function" ? nativeScan : null;
+    this.now = typeof now === "function" ? now : Date.now;
   }
   #notifyDrain() {
     for (const resolve2 of this.#drainWaiters) resolve2();
@@ -380,6 +383,7 @@ var TranscriptReader = class {
   reset() {
     this.generation++;
     this.entries.clear();
+    this.#activeEntryKey = null;
     this.#lastContinuedKey = null;
     if (this.nextImmediate) {
       clearImmediate(this.nextImmediate);
@@ -389,6 +393,24 @@ var TranscriptReader = class {
   }
   dispose() {
     this.reset();
+  }
+  trimIdle(maxAgeMs = 18e4, keepIds) {
+    const now = this.now();
+    const isKept = (key, entry) => Boolean(
+      keepIds && (keepIds.has(key) || keepIds.has(entry.id) || keepIds.has(entry.id.toLowerCase()))
+    );
+    let evicted = 0;
+    for (const [key, entry] of [...this.entries]) {
+      if (isKept(key, entry) || entry.requested || entry.continuing || key === this.#activeEntryKey) {
+        continue;
+      }
+      const accessedAt = entry.lastAccessedAt ?? 0;
+      if (now - accessedAt >= maxAgeMs) {
+        this.entries.delete(key);
+        evicted++;
+      }
+    }
+    return evicted;
   }
   request(scope, id, raw) {
     if (!SCOPE.test(scope || "") || !GUID.test(id || "")) return emptyStats("unavailable", "invalid-boundary");
@@ -400,6 +422,7 @@ var TranscriptReader = class {
     entry.boundary = b;
     entry.requested = true;
     entry.continuing = false;
+    entry.lastAccessedAt = this.now();
     this.entries.delete(key);
     this.entries.set(key, entry);
     while (this.entries.size > this.maxEntries) {
@@ -433,14 +456,20 @@ var TranscriptReader = class {
         entry.continuing = false;
         const generation = this.generation;
         const current = () => generation === this.generation && this.entries.get(entry.key) === entry;
+        this.#activeEntryKey = entry.key;
         try {
           await this.read(entry, current);
-          if (current() && !entry.error && entry.state && !entry.state.eof && !entry.state.limit && !entry.requested) entry.continuing = true;
+          if (current()) {
+            entry.lastAccessedAt = this.now();
+            if (!entry.error && entry.state && !entry.state.eof && !entry.state.limit && !entry.requested) entry.continuing = true;
+          }
         } catch {
           if (current()) {
             entry.error = "io-error";
             entry.continuing = false;
           }
+        } finally {
+          if (this.#activeEntryKey === entry.key) this.#activeEntryKey = null;
         }
       }
     }).finally(() => {

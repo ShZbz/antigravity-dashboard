@@ -19,39 +19,7 @@ export function createFocusTrap(ctx: UsageDomContext, handlers: FocusTrapHandler
   const isFullpage = ctx.options.displayMode === 'fullpage';
   const within = (event: Event): boolean => event.composedPath().includes(dialog);
 
-  const present = (): void => {
-    if (isFullpage) {
-      if (!dialog.hasAttribute('open')) dialog.setAttribute('open', '');
-      return;
-    }
-    if (dialog.matches(':popover-open')) return;
-    dialog.removeAttribute('open');
-    dialog.showPopover();
-    dialog.setAttribute('open', '');
-    $('locale')?.focus({ preventScroll: true });
-  };
-
-  const conceal = (): void => {
-    if (!isFullpage && dialog.matches(':popover-open')) dialog.hidePopover();
-    dialog.removeAttribute('open');
-  };
-
-  const close = (): void => {
-    handlers.onCloseYear(false);
-    handlers.onCloseSubPopovers?.();
-    const tip = $('tip');
-    if (tip) {
-      try {
-        if (typeof tip.hidePopover === 'function' && tip.matches(':popover-open')) tip.hidePopover();
-      } catch {
-        // Ignore if Popover API is unavailable.
-      }
-      tip.hidden = true;
-    }
-    if (isFullpage) return;
-    conceal();
-    state.opener?.focus({ preventScroll: true });
-  };
+  let listenersAttached = false;
 
   const containFocus = (event: FocusEvent): void => {
     if (!state.disposed && dialog.open && !within(event)) {
@@ -113,6 +81,74 @@ export function createFocusTrap(ctx: UsageDomContext, handlers: FocusTrapHandler
     }
   };
 
+  const attachDocumentListeners = (): void => {
+    if (listenersAttached) return;
+    listenersAttached = true;
+    if (!isFullpage) {
+      document.addEventListener('focusin', containFocus, true);
+      document.addEventListener('wheel', containScroll, { capture: true, passive: false });
+      document.addEventListener('touchmove', containScroll, { capture: true, passive: false });
+      for (const type of ['pointerdown', 'mousedown', 'click'] as const) {
+        document.addEventListener(type, containPointer as EventListener, true);
+      }
+    }
+    document.addEventListener('keydown', containKeys, true);
+  };
+
+  const detachDocumentListeners = (): void => {
+    if (!listenersAttached) return;
+    listenersAttached = false;
+    document.removeEventListener('keydown', containKeys, true);
+    if (!isFullpage) {
+      document.removeEventListener('focusin', containFocus, true);
+      document.removeEventListener('wheel', containScroll, true);
+      document.removeEventListener('touchmove', containScroll, true);
+      for (const type of ['pointerdown', 'mousedown', 'click'] as const) {
+        document.removeEventListener(type, containPointer as EventListener, true);
+      }
+    }
+  };
+
+  const present = (): void => {
+    if (isFullpage) {
+      if (!dialog.hasAttribute('open')) dialog.setAttribute('open', '');
+      attachDocumentListeners();
+      return;
+    }
+    if (dialog.matches(':popover-open')) {
+      attachDocumentListeners();
+      return;
+    }
+    dialog.removeAttribute('open');
+    dialog.showPopover();
+    dialog.setAttribute('open', '');
+    attachDocumentListeners();
+    $('locale')?.focus({ preventScroll: true });
+  };
+
+  const conceal = (): void => {
+    detachDocumentListeners();
+    if (!isFullpage && dialog.matches(':popover-open')) dialog.hidePopover();
+    dialog.removeAttribute('open');
+  };
+
+  const close = (): void => {
+    handlers.onCloseYear(false);
+    handlers.onCloseSubPopovers?.();
+    const tip = $('tip');
+    if (tip) {
+      try {
+        if (typeof tip.hidePopover === 'function' && tip.matches(':popover-open')) tip.hidePopover();
+      } catch {
+        // Ignore if Popover API is unavailable.
+      }
+      tip.hidden = true;
+    }
+    if (isFullpage) return;
+    conceal();
+    state.opener?.focus({ preventScroll: true });
+  };
+
   if (!isFullpage) {
     $('close')?.addEventListener('click', close);
     dialog.addEventListener('cancel', (event) => {
@@ -127,30 +163,13 @@ export function createFocusTrap(ctx: UsageDomContext, handlers: FocusTrapHandler
         }
       }
     });
-
-    document.addEventListener('focusin', containFocus, true);
-    document.addEventListener('wheel', containScroll, { capture: true, passive: false });
-    document.addEventListener('touchmove', containScroll, { capture: true, passive: false });
-    for (const type of ['pointerdown', 'mousedown', 'click'] as const) {
-      document.addEventListener(type, containPointer as EventListener, true);
-    }
   }
-  document.addEventListener('keydown', containKeys, true);
 
   return {
     present,
     conceal,
     close,
     dispose() {
-      document.removeEventListener('keydown', containKeys, true);
-      if (!isFullpage) {
-        document.removeEventListener('focusin', containFocus, true);
-        document.removeEventListener('wheel', containScroll, true);
-        document.removeEventListener('touchmove', containScroll, true);
-        for (const type of ['pointerdown', 'mousedown', 'click'] as const) {
-          document.removeEventListener(type, containPointer as EventListener, true);
-        }
-      }
       conceal();
     },
   };

@@ -58,6 +58,7 @@ export type BridgeCallType =
 export interface MetricsRequestInput {
   conversationId?: string | null;
   force?: boolean;
+  includeUsage?: boolean;
 }
 
 export type DiagnosticStage = 'boot' | 'mounted' | 'mount-error';

@@ -3035,9 +3035,10 @@ module.exports = function installAgPulseInlineWidget(...args) {
       const t = language.t;
       const speed = data.speed;
       toggleHidden(root.querySelector('[data-card="speed"]'), !lastConversation && !surface?.showEmpty);
+      const hasUsageSummary = Boolean(data.usage ?? data.usageTotals);
       toggleHidden(
         root.querySelector('[data-card="cache"]'),
-        !lastConversation && !surface?.showEmpty && !data.usage
+        !lastConversation && !surface?.showEmpty && !hasUsageSummary
       );
       toggleHidden(root.querySelector('[data-card="context"]'), false);
       const context = speed?.context;
@@ -3270,6 +3271,10 @@ module.exports = function installAgPulseInlineWidget(...args) {
         });
         root.getElementById("open-usage")?.addEventListener("click", () => {
           const trigger = root.querySelector("[data-card=cache]") ?? null;
+          if (options.onOpenUsage) {
+            options.onOpenUsage(trigger);
+            return;
+          }
           cards.hide();
           usageDashboard?.open(polling.data?.usage, trigger);
         });
@@ -3282,9 +3287,10 @@ module.exports = function installAgPulseInlineWidget(...args) {
       if (!data) return void 0;
       polling.syncConversation();
       if (usageDashboard) {
-        toggleHidden(root.getElementById("usage-entry"), !data.usage);
-        setText(root.getElementById("usage-today"), compact(data.usage?.todayTokens));
-        setText(root.getElementById("usage-month"), compact(data.usage?.monthTokens));
+        const usageSummary = data.usage ?? data.usageTotals;
+        toggleHidden(root.getElementById("usage-entry"), !usageSummary);
+        setText(root.getElementById("usage-today"), compact(usageSummary?.todayTokens));
+        setText(root.getElementById("usage-month"), compact(usageSummary?.monthTokens));
         usageDashboard.update(data.usage);
       }
       if (cards.hasOpenGroupMenu) return void 0;
@@ -3328,6 +3334,9 @@ module.exports = function installAgPulseInlineWidget(...args) {
         if (attr === "data-cascade-id" || attr === "data-testid" || attr === "hidden" || attr === "inert" || attr === "contenteditable") {
           return true;
         }
+        if (attr === "style" || attr === "class") {
+          return target.nodeType === 1 && target.matches(LAYOUT_RELEVANT_SELECTOR);
+        }
         return isLayoutRelevantNode(target);
       }
       for (const added of record.addedNodes) {
@@ -3340,9 +3349,13 @@ module.exports = function installAgPulseInlineWidget(...args) {
       return false;
     }
     function bindHostLifecycleListeners(params) {
-      const { getNode, scheduleLayout, hideCards } = params;
+      const { getNode, shouldTrackScroll, scheduleLayout, hideCards } = params;
       const observer = new MutationObserver((records) => {
         const node = getNode();
+        if (!node?.isConnected) {
+          if (records.length > 0) scheduleLayout();
+          return;
+        }
         if (records.some((record) => isRelevantMutation(record, node))) {
           scheduleLayout();
         }
@@ -3371,15 +3384,21 @@ module.exports = function installAgPulseInlineWidget(...args) {
         const node = getNode();
         if (node && !e.composedPath().includes(node)) hideCards();
       };
+      const onScroll = () => {
+        const node = getNode();
+        if (!node?.isConnected || shouldTrackScroll?.()) {
+          scheduleLayout();
+        }
+      };
       document.addEventListener("keydown", onKey);
       document.addEventListener("pointerdown", onPointer);
       window.addEventListener("resize", scheduleLayout, { passive: true });
-      document.addEventListener("scroll", scheduleLayout, { capture: true, passive: true });
+      document.addEventListener("scroll", onScroll, { capture: true, passive: true });
       return () => {
         observer.disconnect();
         document.removeEventListener("keydown", onKey);
         document.removeEventListener("pointerdown", onPointer);
-        document.removeEventListener("scroll", scheduleLayout, true);
+        document.removeEventListener("scroll", onScroll, true);
         window.removeEventListener("resize", scheduleLayout);
       };
     }
@@ -3393,6 +3412,7 @@ module.exports = function installAgPulseInlineWidget(...args) {
       refreshRequest = null;
       queuedForceRequest = null;
       manualRequest = null;
+      usageFetchRequest = null;
       requestEpoch = 0;
       refreshSeq = 0;
       lastFetch = 0;
@@ -3430,6 +3450,7 @@ module.exports = function installAgPulseInlineWidget(...args) {
         this.refreshRequest = null;
         this.queuedForceRequest = null;
         this.manualRequest = null;
+        this.usageFetchRequest = null;
         this.lastFetch = 0;
       }
       dispose() {
@@ -3460,6 +3481,7 @@ module.exports = function installAgPulseInlineWidget(...args) {
         this.lastFetch = 0;
         this.callbacks.onConversationReset();
         this.manualRequest = null;
+        this.usageFetchRequest = null;
         this.setRefreshBusy(false);
         this.data = { connection: "offline", error: null, serverTime: "", groups: [], speed: null };
         this.callbacks.onHide();
@@ -3493,11 +3515,13 @@ module.exports = function installAgPulseInlineWidget(...args) {
         this.pending = true;
         this.pendingForce = force;
         this.lastFetch = Date.now();
+        const includeUsage = Boolean(this.callbacks.isUsageOpen?.());
         const reqPromise = (async () => {
           try {
             const result = await this.host.getMetrics({
               conversationId: conversation,
-              force
+              force,
+              includeUsage
             });
             if (!current()) return;
             const activeNode = this.callbacks.getNode();
@@ -3510,6 +3534,9 @@ module.exports = function installAgPulseInlineWidget(...args) {
             }
             if (!conversation || result.speed && result.speed.conversationId !== conversation) {
               result.speed = null;
+            }
+            if (result.usage === void 0 && this.callbacks.isUsageOpen?.() && this.data?.usage !== void 0) {
+              result.usage = this.data.usage;
             }
             this.data = result;
             if (result.preferences) {
@@ -3535,6 +3562,47 @@ module.exports = function installAgPulseInlineWidget(...args) {
         })();
         this.refreshRequest = reqPromise;
         return reqPromise;
+      }
+      fetchUsage() {
+        if (this.disposed) return Promise.resolve(null);
+        if (this.data?.usage) return Promise.resolve(this.data.usage);
+        const node = this.callbacks.getNode();
+        if (!node?.isConnected) return Promise.resolve(null);
+        if (this.usageFetchRequest) return this.usageFetchRequest;
+        const conversation = this.callbacks.getConversationId();
+        const epoch = this.requestEpoch;
+        let req = null;
+        req = (async () => {
+          try {
+            const result = await this.host.getMetrics({
+              conversationId: conversation,
+              force: false,
+              includeUsage: true
+            });
+            if (this.disposed || epoch !== this.requestEpoch || conversation !== this.callbacks.getConversationId() || !this.callbacks.getNode()?.isConnected) {
+              return null;
+            }
+            if (this.data) {
+              if (result.usage !== void 0) {
+                this.data.usage = result.usage;
+              }
+            } else {
+              if (!conversation || result.speed && result.speed.conversationId !== conversation) {
+                result.speed = null;
+              }
+              this.data = result;
+            }
+            return result.usage ?? null;
+          } catch {
+            return null;
+          } finally {
+            if (this.usageFetchRequest === req) {
+              this.usageFetchRequest = null;
+            }
+          }
+        })();
+        this.usageFetchRequest = req;
+        return req;
       }
       refreshManually(onBeforeRefresh) {
         if (this.manualRequest) return this.manualRequest.promise;
@@ -3617,6 +3685,7 @@ module.exports = function installAgPulseInlineWidget(...args) {
       let layoutFrame = null;
       let usageDashboard = null;
       let updateMenu = null;
+      let pendingUsageOpen = null;
       let inlineFontScale = resolveFontScale(localGet("ag-pulse-inline-font-scale"));
       const applyInlineFontScale = (scale) => {
         inlineFontScale = resolveFontScale(scale);
@@ -3651,6 +3720,7 @@ module.exports = function installAgPulseInlineWidget(...args) {
         getRoot: () => root,
         getNode: () => node,
         getLanguage: () => language,
+        isUsageOpen: () => Boolean(usageDashboard?.isOpen),
         onConversationReset: () => density.reset(node),
         onRender: () => render(),
         onHide: () => cards.hide(),
@@ -3718,6 +3788,7 @@ module.exports = function installAgPulseInlineWidget(...args) {
         density.reset(node);
         composer = null;
         resizeObserver?.disconnect();
+        pendingUsageOpen = null;
         if (!node) return;
         cards.hide();
         usageDashboard?.dispose();
@@ -3730,6 +3801,33 @@ module.exports = function installAgPulseInlineWidget(...args) {
         node = null;
         root = null;
         polling.invalidateEpoch();
+      }
+      function openUsage(trigger) {
+        if (!usageDashboard || polling.isDisposed || !node?.isConnected) return false;
+        cards.hide();
+        if (polling.data?.usage) {
+          usageDashboard.open(polling.data.usage, trigger);
+          return true;
+        }
+        if (pendingUsageOpen) return true;
+        const activeNode = node;
+        const activeDashboard = usageDashboard;
+        const activeConversation = polling.lastConversation;
+        let req = null;
+        req = polling.fetchUsage().then((usage) => {
+          if (polling.isDisposed || !activeNode.isConnected || node !== activeNode || usageDashboard !== activeDashboard || polling.lastConversation !== activeConversation || !usage) {
+            return;
+          }
+          cards.hide();
+          activeDashboard.open(usage, trigger);
+        }).catch(() => {
+        }).finally(() => {
+          if (pendingUsageOpen === req) {
+            pendingUsageOpen = null;
+          }
+        });
+        pendingUsageOpen = req;
+        return true;
       }
       function mount() {
         if (parkUsageModalNode(node, usageDashboard)) return;
@@ -3781,7 +3879,8 @@ module.exports = function installAgPulseInlineWidget(...args) {
             guide.sync(prefs);
             preferences.sync(prefs);
           },
-          onObserveComposer: observeComposer
+          onObserveComposer: observeComposer,
+          onOpenUsage: openUsage
         });
         ({ node, root, themeController, updateMenu, usageDashboard } = mounted);
         applyInlineFontScale(inlineFontScale);
@@ -3815,8 +3914,13 @@ module.exports = function installAgPulseInlineWidget(...args) {
         });
         if (nextGroup !== void 0) group = nextGroup;
       }
+      const isGuideVisible = () => {
+        const tip = root?.getElementById("language-guide");
+        return Boolean(tip && !tip.hidden);
+      };
       const unbindHost = bindHostLifecycleListeners({
         getNode: () => node,
+        shouldTrackScroll: () => cards.cardName !== null || isGuideVisible(),
         scheduleLayout,
         hideCards: () => cards.hide()
       });
@@ -3833,13 +3937,9 @@ module.exports = function installAgPulseInlineWidget(...args) {
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       const timerId = setInterval(runHeartbeat, 1e3);
-      win.__agPulseOpenUsage = () => {
-        if (!usageDashboard || !polling.data?.usage) return false;
-        cards.hide();
-        usageDashboard.open(polling.data.usage, null);
-        return true;
-      };
+      win.__agPulseOpenUsage = () => openUsage(null);
       win.__agPulseDispose = () => {
+        pendingUsageOpen = null;
         polling.dispose();
         density.dispose(node);
         clearInterval(timerId);

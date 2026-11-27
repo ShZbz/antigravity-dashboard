@@ -6,6 +6,11 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  isNativeAccelAvailable,
+  readLedgerSharedProjectSummaries,
+  releaseNativeCaches,
+} from '../../../src/platform/native-bridge.ts';
+import {
   DesktopUsage,
   UsageLedger,
   queryProjectUsageOverview,
@@ -892,4 +897,243 @@ test('Option B project-meta-v1.json persists SQLite and rawSummaries metadata wi
     });
     assert.equal(detRaw.conversations[0]?.title, 'Renamed Raw Session');
   }
+});
+
+test('native shared-file deduplication parity, owner metadata priority, dirty invalidation, and releaseNativeCaches', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'ag-proj-shared-native-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ledgerDir = join(root, 'ledger');
+  const profileDir = join(root, 'profile');
+  await mkdir(profileDir, { recursive: true });
+
+  const knownAccounts = {
+    [acctA]: { email: 'a@example.test', name: 'Account A', primary: true },
+    [acctB]: { email: 'b@example.test', name: 'Account B', primary: false },
+  };
+  const ledger = new UsageLedger(ledgerDir, { timeZone: 'Asia/Shanghai', knownAccounts });
+  await ledger.registerAccount(acctA, knownAccounts[acctA]);
+  await ledger.registerAccount(acctB, knownAccounts[acctB]);
+  await mkdir(join(ledgerDir, acctA), { recursive: true });
+  await mkdir(join(ledgerDir, acctB), { recursive: true });
+
+  const CID_SHARED_META = 'dddddddd-4444-4444-8444-444444444444';
+  const CID_SHARED_NULL = 'eeeeeeee-5555-4555-8555-555555555555';
+  const sharedMetaHash = scope(CID_SHARED_META);
+  const sharedNullHash = scope(CID_SHARED_NULL);
+
+  // Owned by acctB, stale note in acctA, authoritative note in acctB
+  await writeFile(
+    join(ledgerDir, acctA, `${sharedMetaHash}.json`),
+    JSON.stringify({
+      schema: 1,
+      account: acctA,
+      id: CID_SHARED_META,
+      metadata: { source: 'remote-manual', projectName: 'SharedProj', note: 'Stale Note A' },
+      records: [
+        {
+          id: scope('rec-meta-1'),
+          at: Date.parse('2026-10-11T04:00:00Z'),
+          model: 'Gemini 3.8 Flash',
+          uncached: 300,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 100,
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    join(ledgerDir, acctB, `${sharedMetaHash}.json`),
+    JSON.stringify({
+      schema: 1,
+      account: acctB,
+      id: CID_SHARED_META,
+      metadata: { source: 'remote-manual', projectName: 'SharedProj', note: 'Owner Note B' },
+      records: [
+        {
+          id: scope('rec-meta-1'),
+          at: Date.parse('2026-10-11T04:00:00Z'),
+          model: 'Gemini 3.8 Flash',
+          uncached: 300,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 100,
+        },
+      ],
+    }),
+  );
+  await ledger.registerOwnership(CID_SHARED_META, acctB, { overwrite: true });
+
+  // Unowned shared doc with at:null record and higher tokens in acctB
+  await writeFile(
+    join(ledgerDir, acctA, `${sharedNullHash}.json`),
+    JSON.stringify({
+      schema: 1,
+      account: acctA,
+      id: CID_SHARED_NULL,
+      records: [
+        {
+          id: scope('rec-null-1'),
+          at: null,
+          model: 'Gemini 3.8 Flash',
+          uncached: 50,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 10,
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    join(ledgerDir, acctB, `${sharedNullHash}.json`),
+    JSON.stringify({
+      schema: 1,
+      account: acctB,
+      id: CID_SHARED_NULL,
+      records: [
+        {
+          id: scope('rec-null-1'),
+          at: null,
+          model: 'Gemini 3.8 Flash',
+          uncached: 90,
+          cacheRead: 0,
+          cacheWrite: 0,
+          output: 10,
+        },
+      ],
+    }),
+  );
+
+  const prevDisable = process.env.PULSE_DISABLE_NATIVE_ACCEL;
+  t.after(() => {
+    if (prevDisable === undefined) delete process.env.PULSE_DISABLE_NATIVE_ACCEL;
+    else process.env.PULSE_DISABLE_NATIVE_ACCEL = prevDisable;
+  });
+
+  const stripUpdatedAt = (obj) => {
+    const copy = structuredClone(obj);
+    delete copy.updatedAt;
+    return copy;
+  };
+
+  // JS fallback check (PULSE_DISABLE_NATIVE_ACCEL=1)
+  process.env.PULSE_DISABLE_NATIVE_ACCEL = '1';
+  assert.equal(releaseNativeCaches('soft'), null);
+  assert.equal(releaseNativeCaches('full'), null);
+  assert.equal(
+    readLedgerSharedProjectSummaries({
+      directory: ledgerDir,
+      scope: 'all',
+      timeZone: 'Asia/Shanghai',
+      zeroAtDate: '1970-01-01',
+      knownAccounts,
+    }),
+    null,
+  );
+
+  const jsLedger = new UsageLedger(ledgerDir, { timeZone: 'Asia/Shanghai', knownAccounts });
+  const jsOverviewAll = await queryProjectUsageOverview({
+    ledger: jsLedger,
+    profileDir,
+    scope: 'all',
+    timeZone: 'Asia/Shanghai',
+  });
+  const jsDetailRemote = await queryProjectConversationDetail({
+    ledger: jsLedger,
+    profileDir,
+    scope: 'all',
+    projectKey: 'remote:sharedproj',
+    timeZone: 'Asia/Shanghai',
+  });
+  assert.equal(jsOverviewAll.totalTokens, 500);
+  assert.equal(jsDetailRemote.conversations[0]?.title, 'Owner Note B');
+
+  delete process.env.PULSE_DISABLE_NATIVE_ACCEL;
+  if (!isNativeAccelAvailable()) {
+    return;
+  }
+
+  const nativeLedger = new UsageLedger(ledgerDir, { timeZone: 'Asia/Shanghai', knownAccounts });
+  const nativeSumAll = await nativeLedger.summary('all', Date.parse('2026-10-11T12:00:00Z'));
+  const nativeOverviewAll = await queryProjectUsageOverview({
+    ledger: nativeLedger,
+    profileDir,
+    scope: 'all',
+    timeZone: 'Asia/Shanghai',
+  });
+  const nativeDetailRemote = await queryProjectConversationDetail({
+    ledger: nativeLedger,
+    profileDir,
+    scope: 'all',
+    projectKey: 'remote:sharedproj',
+    timeZone: 'Asia/Shanghai',
+  });
+
+  assert.deepEqual(stripUpdatedAt(nativeOverviewAll), stripUpdatedAt(jsOverviewAll));
+  assert.deepEqual(stripUpdatedAt(nativeDetailRemote), stripUpdatedAt(jsDetailRemote));
+  assert.equal(nativeOverviewAll.totalTokens, nativeSumAll.totalTokens);
+
+  // Direct N-API shared summary call + releaseNativeCaches('soft' | 'full')
+  const directShared = readLedgerSharedProjectSummaries({
+    directory: ledgerDir,
+    scope: 'all',
+    timeZone: 'Asia/Shanghai',
+    fixedOffsetSecs: 28800,
+    zeroAtDate: '1970-01-01',
+    knownAccounts,
+  });
+  assert.ok(directShared);
+  assert.equal(directShared.files.length, 2);
+
+  const softRes = releaseNativeCaches('soft');
+  assert.deepEqual(softRes, {
+    released: true,
+    mode: 'soft',
+    ledgerCleared: true,
+    projectCleared: true,
+  });
+
+  // Subsequent queries after soft release still produce identical results
+  const afterSoftSum = await nativeLedger.summary('all', Date.parse('2026-10-11T12:05:00Z'));
+  const afterSoftOverview = await queryProjectUsageOverview({
+    ledger: nativeLedger,
+    profileDir,
+    scope: 'all',
+    timeZone: 'Asia/Shanghai',
+  });
+  assert.equal(afterSoftSum.totalTokens, nativeSumAll.totalTokens);
+  assert.deepEqual(stripUpdatedAt(afterSoftOverview), stripUpdatedAt(nativeOverviewAll));
+
+  const fullRes = releaseNativeCaches('full');
+  assert.deepEqual(fullRes, {
+    released: true,
+    mode: 'full',
+    ledgerCleared: true,
+    projectCleared: true,
+  });
+
+  const afterFullOverview = await queryProjectUsageOverview({
+    ledger: nativeLedger,
+    profileDir,
+    scope: 'all',
+    timeZone: 'Asia/Shanghai',
+  });
+  assert.deepEqual(stripUpdatedAt(afterFullOverview), stripUpdatedAt(nativeOverviewAll));
+
+  // Same-size shared-file update via ingest invalidates native shared cache via projectDirtyRelPaths
+  await nativeLedger.ingest(acctB, CID_SHARED_META, rawUsage({
+    at: '2026-10-11T04:00:00Z',
+    responseId: 'r-shared-upd',
+    input: 600,
+    cacheRead: 0,
+    output: 100,
+  }));
+  const updatedOverview = await queryProjectUsageOverview({
+    ledger: nativeLedger,
+    profileDir,
+    scope: 'all',
+    timeZone: 'Asia/Shanghai',
+  });
+  assert.equal(updatedOverview.totalTokens, 1200);
+  assert.equal(nativeLedger.projectDirtyRelPaths.size, 0);
 });

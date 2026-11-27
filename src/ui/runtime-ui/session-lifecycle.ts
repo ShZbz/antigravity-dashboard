@@ -13,6 +13,10 @@ export interface SessionLifecycleContext {
   rendererGuard: (expression: string) => string;
 }
 
+export function buildGuardedSource(source: string, origin: string | undefined): string {
+  return 'if (location.origin === ' + JSON.stringify(origin) + ') {' + source + '}';
+}
+
 export async function attachTargetSession(
   ctx: SessionLifecycleContext,
   target: DevToolsTarget,
@@ -39,9 +43,13 @@ export async function attachTargetSession(
     await connection.command('Page.enable');
     await connection.command('Runtime.enable');
     await connection.command('Runtime.addBinding', { name: ctx.binding });
-    const guardedSource =
-      'if (location.origin === ' + JSON.stringify(connection.origin) + ') {' + ctx.source + '}';
-    connection.guardedSource = guardedSource;
+    const guardedSource = buildGuardedSource(ctx.source, connection.origin);
+    // Provide on-demand getter for existing test doubles without retaining a duplicate 500 KB string per connection.
+    Object.defineProperty(connection, 'guardedSource', {
+      configurable: true,
+      enumerable: false,
+      get: () => buildGuardedSource(ctx.source, connection.origin),
+    });
     const added = (await connection.command('Page.addScriptToEvaluateOnNewDocument', {
       source: guardedSource,
     })) as { identifier?: string };
@@ -122,7 +130,7 @@ export async function verifyTargetSession(
   if (status && (!status.installed || !status.bridge)) {
     if (!(await ctx.owns())) return false;
     const recovery = (await connection.command('Runtime.evaluate', {
-      expression: connection.guardedSource,
+      expression: buildGuardedSource(ctx.source, connection.origin),
     })) as { exceptionDetails?: unknown };
     if (recovery.exceptionDetails) throw new Error('Widget recovery failed');
   }

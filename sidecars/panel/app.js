@@ -128,36 +128,36 @@
     }
     return element;
   }
-  function setText(el2, value) {
+  function setText(el, value) {
     const next = value == null ? "" : String(value);
-    if (el2 && el2.textContent !== next) el2.textContent = next;
+    if (el && el.textContent !== next) el.textContent = next;
   }
-  function setAttr(el2, name, value) {
-    if (!el2) return;
+  function setAttr(el, name, value) {
+    if (!el) return;
     if (value === null || value === void 0) {
-      if (el2.hasAttribute(name)) el2.removeAttribute(name);
+      if (el.hasAttribute(name)) el.removeAttribute(name);
       return;
     }
     const next = String(value);
-    if (el2.getAttribute(name) !== next) el2.setAttribute(name, next);
+    if (el.getAttribute(name) !== next) el.setAttribute(name, next);
   }
-  function setStyle(el2, prop, value) {
-    if (!el2) return;
+  function setStyle(el, prop, value) {
+    if (!el) return;
     const next = value == null ? "" : String(value);
     if (prop.startsWith("--") || prop.includes("-")) {
-      if (el2.style.getPropertyValue(prop) !== next) {
-        el2.style.setProperty(prop, next);
+      if (el.style.getPropertyValue(prop) !== next) {
+        el.style.setProperty(prop, next);
       }
       return;
     }
-    const styleObj = el2.style;
+    const styleObj = el.style;
     if (styleObj[prop] !== next) {
       styleObj[prop] = next;
     }
   }
-  function setHidden(el2, hidden) {
+  function setHidden(el, hidden) {
     const next = Boolean(hidden);
-    if (el2 && el2.hidden !== next) el2.hidden = next;
+    if (el && el.hidden !== next) el.hidden = next;
   }
 
   // src/shared/format.ts
@@ -1095,106 +1095,6 @@ ${FONT_CONTROL_CSS}
       titleText
     };
   }
-  function createFontPopover(options) {
-    const { trigger, mountRoot, getLanguage, onChange } = options;
-    const doc = trigger.ownerDocument;
-    const popover = doc.createElement("div");
-    popover.className = "font-popover";
-    popover.setAttribute("popover", "manual");
-    popover.setAttribute("role", "dialog");
-    const controls = createFontScaleControls({
-      doc,
-      mountRoot,
-      getLanguage,
-      initial: options.initial,
-      onChange
-    });
-    popover.append(controls.headElement, controls.rowsElement);
-    mountRoot.append(popover);
-    const isOpen = () => popover.matches(":popover-open");
-    const positionPopover = () => {
-      const r = trigger.getBoundingClientRect();
-      const popRect = popover.getBoundingClientRect();
-      const popW = popRect.width || 240;
-      const popH = popRect.height || 140;
-      const vw = doc.documentElement.clientWidth || window.innerWidth;
-      const vh = doc.documentElement.clientHeight || window.innerHeight;
-      const left = Math.max(8, Math.min(vw - popW - 8, r.right - popW));
-      const top = Math.max(8, Math.min(vh - popH - 8, r.bottom + 6));
-      popover.style.left = `${Math.round(left)}px`;
-      popover.style.top = `${Math.round(top)}px`;
-    };
-    const close = () => {
-      if (!isOpen()) return;
-      try {
-        popover.hidePopover();
-      } catch {
-        popover.style.display = "none";
-      }
-      trigger.setAttribute("aria-expanded", "false");
-    };
-    const localize = () => {
-      controls.localize();
-      const zh = getLanguage() === "zh-CN";
-      popover.setAttribute("aria-label", controls.titleText());
-      trigger.title = zh ? "\u5B57\u4F53\u5927\u5C0F\u8BBE\u7F6E" : "Font size settings";
-      trigger.setAttribute("aria-label", trigger.title);
-    };
-    const open = () => {
-      localize();
-      controls.syncInputs();
-      try {
-        popover.showPopover();
-      } catch {
-        popover.style.display = "block";
-      }
-      positionPopover();
-      trigger.setAttribute("aria-expanded", "true");
-    };
-    const onTriggerClick = (e) => {
-      e.stopPropagation();
-      if (isOpen()) close();
-      else open();
-    };
-    const onDocPointerDown = (e) => {
-      if (!isOpen()) return;
-      const path = typeof e.composedPath === "function" ? e.composedPath() : [e.target];
-      if (path.includes(popover) || path.includes(trigger)) return;
-      close();
-    };
-    const onDocKeyDown = (e) => {
-      if (e.key === "Escape" && isOpen()) {
-        e.stopPropagation();
-        close();
-        trigger.focus();
-      }
-    };
-    const onViewportChange = () => {
-      if (isOpen()) positionPopover();
-    };
-    trigger.setAttribute("aria-haspopup", "dialog");
-    trigger.setAttribute("aria-expanded", "false");
-    trigger.addEventListener("click", onTriggerClick);
-    doc.addEventListener("pointerdown", onDocPointerDown, true);
-    doc.addEventListener("keydown", onDocKeyDown, true);
-    window.addEventListener("resize", onViewportChange);
-    localize();
-    return {
-      element: popover,
-      sync: controls.sync,
-      localize,
-      close,
-      values: controls.values,
-      dispose: () => {
-        close();
-        trigger.removeEventListener("click", onTriggerClick);
-        doc.removeEventListener("pointerdown", onDocPointerDown, true);
-        doc.removeEventListener("keydown", onDocKeyDown, true);
-        window.removeEventListener("resize", onViewportChange);
-        popover.remove();
-      }
-    };
-  }
 
   // src/shared/color.ts
   var LUMINANCE_WEIGHTS = [0.2126, 0.7152, 0.0722];
@@ -1225,27 +1125,6 @@ ${FONT_CONTROL_CSS}
   function rgbToCss(color) {
     return `rgb(${color[0]} ${color[1]} ${color[2]})`;
   }
-  function rgbToHsl(rgb) {
-    const r = rgb[0] / 255;
-    const g = rgb[1] / 255;
-    const b = rgb[2] / 255;
-    const hi = Math.max(r, g, b);
-    const lo = Math.min(r, g, b);
-    const d = hi - lo;
-    const l = (hi + lo) / 2;
-    const h = d ? (hi === r ? (g - b) / d + (g < b ? 6 : 0) : hi === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60 : 0;
-    const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
-    return [h, s, l];
-  }
-  function hslToRgb(hue, sat, light) {
-    const h = (hue % 360 + 360) % 360;
-    const a = sat * Math.min(light, 1 - light);
-    const channel = (n) => {
-      const k = (n + h / 30) % 12;
-      return Math.round(255 * (light - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
-    };
-    return [channel(0), channel(8), channel(4)];
-  }
   function readableColor(color, surfaces, minContrast = 4.5) {
     const isReadable = (values) => surfaces.every((surface) => contrastRatio(values, surface) >= minContrast);
     if (isReadable(color)) return rgbToCss(color);
@@ -1258,16 +1137,6 @@ ${FONT_CONTROL_CSS}
       if (isReadable(mixed)) return rgbToCss(mixed);
     }
     return rgbToCss(end);
-  }
-  function buildAccentColor(hue, sat, light, bg, towardLight, minContrast = 3) {
-    const stepDelta = towardLight ? 5e-3 : -5e-3;
-    let currentLight = light;
-    let rgb = hslToRgb(hue, sat, currentLight);
-    for (let step = 0; contrastRatio(rgb, bg) < minContrast && step < 100; step++) {
-      currentLight = Math.max(0, Math.min(1, currentLight + stepDelta));
-      rgb = hslToRgb(hue, sat, currentLight);
-    }
-    return rgbToCss(rgb);
   }
   function normalizeHexColor(value) {
     if (typeof value !== "string" || !HEX_COLOR_RE.test(value)) return null;
@@ -1474,8 +1343,8 @@ ${FONT_CONTROL_CSS}
   function rgbKey(color) {
     return color ? `${color[0]},${color[1]},${color[2]}` : "";
   }
-  function readWatchedInlineStyle(el2) {
-    const style = el2.style;
+  function readWatchedInlineStyle(el) {
+    const style = el.style;
     let out = "";
     for (let i = 0; i < WATCHED_STYLE_PROPS.length; i++) {
       out += `${style.getPropertyValue(WATCHED_STYLE_PROPS[i])}\0`;
@@ -1794,3688 +1663,6 @@ ${FONT_CONTROL_CSS}
     return { css, shadowCss, attach, normalizeHostTheme };
   }
 
-  // src/ui/usage-modal/usage.css
-  var usage_default = '.chart-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }\n.range { display: flex; align-items: center; gap: 10px; }\n.range[hidden] { display: none; }\n.range button { height: 26px; width: 26px; border: 0; }\n.range button:not(:disabled):hover { background: var(--pulse-hover); }\n.range strong { font-size: calc(12px * var(--pulse-usage-font-scale, 1)); font-weight: 500; min-width: 106px; text-align: center; }\n.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0 0 22px; }\n.legend button {\n  display: flex; align-items: center; gap: 7px; padding: 3px 0; border: 0;\n  border-radius: 3px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); border-color: transparent; background: transparent; color: var(--pulse-muted);\n}\n.legend button:hover, .legend button[aria-pressed=true] { color: var(--pulse-foreground); }\n.legend button[aria-pressed=false] { opacity: .4; text-decoration: line-through; }\n.dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; background: var(--model-color); }\n.legend .dot { width: 7px; height: 7px; border-radius: 50%; }\n.chart-wrap { overflow-x: auto; border-bottom: 1px solid var(--pulse-separator); padding-top: 6px; padding-bottom: 17px; margin-bottom: 18px; }\n.chart { height: 246px; display: flex; gap: 16px; min-width: 650px; }\n.axis { width: 42px; flex: none; position: relative; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }\n.axis span { position: absolute; right: 0; transform: translateY(50%); }\n.plot { position: relative; flex: 1; display: flex; align-items: stretch; gap: 5px; padding: 0 1px; }\n.grid-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--pulse-separator); opacity: .45; pointer-events: none; }\n.grid-line:first-child { opacity: .85; }\n.bar-column {\n  position: relative; flex: 1; min-width: 0; display: flex; align-items: flex-end;\n  border: 0; border-radius: 4px; background: transparent; padding: 0; margin-bottom: 19px;\n}\n.bar-column:hover { background: color-mix(in srgb, var(--pulse-hover) 55%, transparent); }\n.bar-column:active { transform: none; }\n.bar-column.selected { background: color-mix(in srgb, var(--pulse-accent) 10%, transparent); outline: 2px solid var(--pulse-accent); outline-offset: 2px; border-radius: 4px; }\n.stack { display: flex; flex-direction: column-reverse; width: 62%; max-width: 30px; margin-inline: auto; gap: 0; pointer-events: none; border-radius: 4px 4px 0 0; overflow: hidden; }\n.bar-segment {\n  display: block; flex: none; width: 100%; min-height: 0; border-radius: 0;\n  pointer-events: auto; background: var(--model-color);\n  transition: height 240ms cubic-bezier(.22, 1, .36, 1), opacity 140ms ease;\n}\n.bar-segment.legacy { background: var(--pulse-muted) !important; opacity: 0.55; outline: 1px dashed var(--pulse-border); }\n.plot[data-highlight] .bar-segment:not([data-highlight=true]) { opacity: .24; }\n.x-label, .axis { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); }\n.x-label { position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); color: var(--pulse-muted); white-space: nowrap; }\n.empty-bar { height: 1px; opacity: .35; width: 100%; background: var(--pulse-track); border-radius: 2px; }\n.chart-empty { position: absolute; left: 0; right: 0; top: 40%; text-align: center; color: var(--pulse-muted); font-size: calc(12px * var(--pulse-usage-font-scale, 1)); pointer-events: none; }\n.chart-summary { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }\n.chart-summary strong { color: var(--pulse-foreground); font-weight: 500; }\n\n.dim-toggle { display: inline-flex; padding: 2px; background: var(--pulse-hover); border-radius: 6px; gap: 2px; margin-left: 12px; vertical-align: middle; }\n.dim-toggle[hidden] { display: none; }\n.dim-toggle + .dim-toggle { margin-left: 4px; }\n.dim-toggle button { border: 0; padding: 2px 8px; border-radius: 4px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); cursor: pointer; background: transparent; }\n.dim-toggle button[aria-pressed=true] { background: var(--pulse-control); color: var(--pulse-foreground); font-weight: 500; box-shadow: 0 1px 2px #0002; }\n.hourly-mode-seg { display: inline-flex; padding: 2px; background: var(--pulse-hover); border-radius: 6px; gap: 2px; margin-left: 8px; vertical-align: middle; }\n.hourly-mode-seg button { border: 0; padding: 2px 8px; border-radius: 4px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); cursor: pointer; background: transparent; }\n.hourly-mode-seg button[aria-pressed=true] { background: var(--pulse-control); color: var(--pulse-foreground); font-weight: 500; }\n#toggle-all-models { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-accent); background: transparent; border: 1px dashed var(--pulse-border); border-radius: 6px; padding: 3px 8px; cursor: pointer; }\n#toggle-all-models:hover { background: var(--pulse-hover); }\n@keyframes pulse-reveal { from { opacity: .15; transform: translateY(-4px); } to { opacity: 1; transform: none; } }\n.other-models { display: flex; flex-wrap: wrap; gap: 7px; width: 100%; padding-top: 6px; border-top: 1px dashed var(--pulse-separator); margin-top: 4px; }\n.other-models[hidden] { display: none; }\n.other-models:not([hidden]) { animation: pulse-reveal 160ms cubic-bezier(.22, 1, .36, 1); }\n.custom-range-controls { display: flex; align-items: center; gap: 6px; }\n.custom-range-controls input[type=date] { padding: 3px 6px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); border-radius: 6px; border: 1px solid var(--pulse-border); background: var(--pulse-control); color: var(--pulse-foreground); }\n.custom-range-controls[hidden] { display: none; }\n.reset-drilldown { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--pulse-border); background: var(--pulse-hover); color: var(--pulse-foreground); cursor: pointer; }\n.reset-drilldown[hidden] { display: none; }\n.reset-drilldown:hover { background: var(--pulse-control); }\n\n.hourly-section { margin: 18px 0; border: 1px solid var(--pulse-border); border-radius: 12px; background: var(--pulse-control); overflow: hidden; }\n.hourly-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; gap: 12px; }\n.hourly-toggle { display: flex; align-items: center; gap: 12px; border: 0; background: transparent; color: var(--pulse-foreground); cursor: pointer; padding: 0; text-align: left; flex: 1; min-width: 0; }\n.hourly-toggle:hover { color: var(--pulse-accent); }\n.hourly-toggle:active { transform: none; }\n#hourly-title { font-size: calc(12px * var(--pulse-usage-font-scale, 1)); font-weight: 600; }\n.hourly-chevron { width: 12px; height: 12px; fill: none; stroke: var(--pulse-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms cubic-bezier(.23, 1, .32, 1); flex: none; }\n.hourly-toggle[aria-expanded=true] .hourly-chevron { transform: rotate(180deg); }\n.hourly-content { padding: 10px 16px 16px; border-top: 1px solid var(--pulse-separator); }\n.hourly-content[hidden] { display: none; }\n.hourly-content:not([hidden]) { animation: pulse-reveal 160ms cubic-bezier(.22, 1, .36, 1); }\n.hourly-chart-wrap { width: 100%; overflow-x: auto; }\n.hourly-chart-wrap svg { width: 100%; max-width: 100%; height: auto; display: block; }\n.hourly-crosshair, .hourly-focus-ring { transition: opacity 120ms ease; pointer-events: none; }\n.hourly-pt { transition: r 120ms ease, fill-opacity 120ms ease; }\n\n.table-wrap { overflow: auto; }\n.table { width: 100%; border-collapse: collapse; text-align: right; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); white-space: nowrap; }\n.table th { font-weight: 400; color: var(--pulse-muted); padding: 8px 12px; border-bottom: 1px solid var(--pulse-separator); }\n.table td { padding: 12px; border-bottom: 1px solid var(--pulse-separator); }\n.table th:first-child, .table td:first-child { text-align: left; padding-left: 0; }\n.table td:first-child span { margin-right: 7px; }\n.table tr:last-child td { border-bottom: 0; }\n.table .dot { border-radius: 50%; }\n.model-group-row { cursor: pointer; transition: background-color 140ms ease; }\n.model-group-row:hover { background: color-mix(in srgb, var(--pulse-hover) 65%, transparent); }\n.model-group-row:focus-visible { outline: 2px solid var(--pulse-accent); outline-offset: -2px; }\n.model-group-row[aria-expanded=true] { background: color-mix(in srgb, var(--pulse-control) 45%, transparent); }\n.model-group-name { font-weight: 500; color: var(--pulse-foreground); }\n.model-variant-count { display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); background: var(--pulse-hover); vertical-align: middle; }\n.model-group-chevron { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-right: 0 !important; transition: color 140ms ease; }\n.model-group-row:hover .model-group-chevron, .model-group-row[aria-expanded=true] .model-group-chevron { color: var(--pulse-foreground); }\n.model-variant-row { background: color-mix(in srgb, var(--pulse-control) 28%, transparent); font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }\n.model-variant-row td { padding-top: 8px; padding-bottom: 8px; border-bottom-style: dashed; }\n.table .model-variant-row td:first-child { padding-left: 18px; }\n.variant-branch { color: var(--pulse-subtle); opacity: .75; margin-right: 6px !important; }\n.variant-name { color: var(--pulse-label); }\n.variant-share { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-right: 0 !important; }\n\n.manual-section { margin-top: 24px; border-top: 1px solid var(--pulse-separator); padding-top: 18px; }\n.btn-delete { padding: 2px 8px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); border-radius: 4px; border: 1px solid var(--pulse-border); background: transparent; color: var(--pulse-danger, #e5484d); cursor: pointer; }\n.btn-delete:hover { background: color-mix(in srgb, var(--pulse-danger, #e5484d) 15%, transparent); }\n.modal-layer { position: fixed; inset: 0; background: #0008; backdrop-filter: blur(3px); z-index: 99; display: flex; align-items: center; justify-content: center; padding: 20px; opacity: 1; transition: opacity 150ms ease; }\n.modal-layer[hidden] { display: none; }\n@starting-style { .modal-layer:not([hidden]) { opacity: 0; } .modal-layer:not([hidden]) .modal-card { opacity: 0; transform: translateY(8px) scale(.97); } }\n.modal-card { width: min(440px, calc(100vw - 32px)); background: var(--pulse-background); border: 1px solid var(--pulse-border); border-radius: 14px; padding: 22px 24px; box-shadow: 0 16px 40px var(--pulse-shadow); display: flex; flex-direction: column; gap: 14px; opacity: 1; transform: none; transition: opacity 160ms ease, transform 180ms cubic-bezier(.22, 1, .36, 1); }\n.modal-title { font-size: calc(15px * var(--pulse-usage-font-scale, 1)); font-weight: 600; margin: 0; }\n.modal-form { display: flex; flex-direction: column; gap: 12px; }\n.form-row { display: flex; flex-direction: column; gap: 4px; }\n.form-row.two-col { flex-direction: row; gap: 10px; }\n.form-row.two-col > div { flex: 1; display: flex; flex-direction: column; gap: 4px; }\n.form-row label { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }\n.form-row input, .form-row select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--pulse-border); background: var(--pulse-control); color: var(--pulse-foreground); font: inherit; font-size: calc(12px * var(--pulse-usage-font-scale, 1)); }\n.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }\n.modal-actions button { padding: 6px 14px; border-radius: 6px; font-size: calc(12px * var(--pulse-usage-font-scale, 1)); }\n.btn-primary { background: var(--pulse-accent); color: #fff; border-color: var(--pulse-accent); }\n\n.footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: auto; padding-top: 20px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }\n.alert { color: var(--pulse-warning); margin-top: 12px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); }\n.tip { position: fixed; inset: auto; margin: 0; z-index: 20; max-width: 280px; padding: 12px 14px; border: 1px solid var(--pulse-border); border-radius: 9px; background: var(--pulse-menu); box-shadow: 0 8px 30px var(--pulse-shadow); color: var(--pulse-foreground); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); pointer-events: none; opacity: 1; transition: opacity 120ms ease, transform 120ms cubic-bezier(.22, 1, .36, 1); }\n.tip[hidden] { display: none; }\n@starting-style { .tip:not([hidden]) { opacity: .15; transform: translateY(3px); } }\n.tip .tip-title { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-bottom: 5px; }\n.tip strong { font-size: calc(16px * var(--pulse-usage-font-scale, 1)); font-weight: 550; }\n.tip-model { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 5px; padding: 3px 0; }\n.tip-model.dimmed { opacity: .5; }\n.tip-model.active { font-weight: 600; }\n.tip-model .dot { margin-right: 6px; }\n.model-share { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-left: 9px; }\n\n.actions button.font-trigger { width: 32px; height: 32px; padding: 0; font-size: calc(12px * var(--pulse-usage-font-scale, 1)); font-weight: 700; }\n#details > .section-head { flex-wrap: wrap; }\n.detail-heading-group { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }\n.detail-picker-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }\n.detail-summary-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }\n.picker { position: relative; flex: none; }\n.picker-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; height: 28px; padding: 0 10px; border: 1px solid var(--pulse-border); border-radius: 7px; background: var(--pulse-control); color: var(--pulse-foreground); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); font-weight: 500; cursor: pointer; }\n.picker-trigger:hover, .picker-trigger[aria-expanded=true] { background: var(--pulse-hover); }\n.picker-chevron { width: 12px; height: 12px; fill: none; stroke: var(--pulse-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms cubic-bezier(.23, 1, .32, 1); }\n.picker-trigger[aria-expanded=true] .picker-chevron { transform: rotate(180deg); }\n.picker-menu { position: fixed; inset: auto; margin: 0; padding: 5px; min-width: 148px; max-width: min(320px, calc(100vw - 24px)); max-height: 260px; overflow-y: auto; border: 1px solid var(--pulse-border); border-radius: 10px; background: var(--pulse-menu); color: var(--pulse-foreground); box-shadow: 0 8px 26px var(--pulse-shadow); z-index: 25; }\n.picker-menu::backdrop { background: transparent; pointer-events: none; }\n.picker-option { width: 100%; border: 0; border-radius: 6px; padding: 7px 9px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: calc(12px * var(--pulse-usage-font-scale, 1)); text-align: left; background: transparent; color: var(--pulse-foreground); cursor: pointer; }\n.picker-option:hover, .picker-option:focus-visible { background: var(--pulse-hover); }\n.picker-option[aria-selected=true] { background: color-mix(in srgb, var(--pulse-accent) 12%, var(--pulse-menu)); }\n.picker-option > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.picker-hint { margin-left: auto; font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); font-variant-numeric: tabular-nums; flex: none; }\n.picker-check { color: var(--pulse-accent); width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }\n.picker-option[aria-selected=true] .picker-check { opacity: 1; }\n.project-scope-note { font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--pulse-border); background: color-mix(in srgb, var(--pulse-control) 50%, transparent); }\n.table tr.project-row { cursor: pointer; transition: background-color 120ms ease; }\n.table tr.project-row:hover { background: var(--pulse-hover); }\n.table tr.project-row.is-selected { background: color-mix(in srgb, var(--pulse-accent) 12%, transparent); }\n.project-kind-badge { display: inline-block; padding: 1px 6px; border-radius: 5px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); background: var(--pulse-control); border: 1px solid var(--pulse-border); }\n.project-open-cue { font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-accent); margin-left: 6px; }\n.project-detail-section { margin: 18px 0 6px; padding: 14px 16px; border: 1px solid var(--pulse-border); border-radius: 12px; background: color-mix(in srgb, var(--pulse-control) 42%, transparent); }\n.project-detail-section[hidden] { display: none; }\n.project-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }\n.project-detail-title-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }\n.project-detail-title-group h2 { margin: 0; font-size: calc(13px * var(--pulse-usage-font-scale, 1)); font-weight: 600; }\n.project-detail-empty { padding: 22px 12px; text-align: center; color: var(--pulse-muted); font-size: calc(11.5px * var(--pulse-usage-font-scale, 1)); }\n.proj-detail-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; align-items: start; }\n.proj-bar-panel, .proj-donut-panel { min-width: 0; overflow: hidden; }\n.proj-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }\n.proj-panel-label { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); font-weight: 600; color: var(--pulse-muted); margin: 0; }\n.proj-panel-head > .proj-panel-label, .proj-donut-panel > .proj-panel-label { margin-bottom: 0; }\n.proj-donut-panel > .proj-panel-label { margin-bottom: 10px; }\n.proj-panel-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }\n.proj-action-btn { height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--pulse-border); background: var(--pulse-control); color: var(--pulse-muted); font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease; }\n.proj-action-btn:hover { background: var(--pulse-hover); color: var(--pulse-foreground); }\n.proj-action-btn[aria-pressed="true"] { border-color: color-mix(in srgb, var(--pulse-accent) 45%, var(--pulse-border)); color: var(--pulse-accent); background: color-mix(in srgb, var(--pulse-accent) 10%, var(--pulse-control)); }\n.proj-bars { display: grid; gap: 6px; max-height: 310px; overflow-y: auto; padding-right: 4px; align-content: start; }\n.proj-bars.is-all { max-height: 440px; }\n.proj-bar-group { display: grid; gap: 3px; }\n.proj-bar-row { display: grid; gap: 4px; padding: 5px 7px; border-radius: 7px; cursor: pointer; transition: background-color 120ms ease; min-width: 0; }\n.proj-bar-row:hover, .proj-bar-row.is-active { background: var(--pulse-hover); }\n.proj-bar-caret { flex: none; width: 12px; text-align: center; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); transition: transform 120ms ease; }\n.proj-bar-row[aria-expanded="true"] .proj-bar-caret { color: var(--pulse-accent); }\n.proj-subagent-list { display: grid; gap: 4px; margin: 2px 0 4px 16px; padding-left: 10px; border-left: 1.5px solid color-mix(in srgb, var(--pulse-border) 85%, transparent); }\n.proj-subagent-row { display: grid; gap: 3px; padding: 4px 7px; border-radius: 6px; cursor: default; min-width: 0; transition: background-color 120ms ease; }\n.proj-subagent-row:hover { background: var(--pulse-hover); }\n.proj-subagent-row .proj-bar-meta { font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); }\n.proj-subagent-row .proj-bar-track { height: 5px; opacity: .82; }\n.proj-bar-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); min-width: 0; }\n.proj-bar-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }\n.proj-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pulse-foreground); font-weight: 500; min-width: 0; }\n.proj-badge { flex: none; padding: 0 5px; border-radius: 4px; font-size: calc(9.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); background: var(--pulse-control); border: 1px solid var(--pulse-border); }\n.proj-reassign-btn { flex: none; padding: 0 6px; height: 19px; line-height: 17px; border-radius: 4px; font-size: calc(9.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); background: var(--pulse-control); border: 1px solid var(--pulse-border); cursor: pointer; }\n.proj-reassign-btn:hover { color: var(--pulse-foreground); border-color: color-mix(in srgb, var(--pulse-accent) 55%, var(--pulse-border)); }\n.proj-reassign-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 7px 4px; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--pulse-border); background: color-mix(in srgb, var(--pulse-control) 75%, transparent); font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); }\n.proj-reassign-select { flex: 1; min-width: 120px; height: 24px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--pulse-border); background: var(--pulse-background); color: var(--pulse-foreground); font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); }\n.proj-action-btn.is-primary { background: var(--pulse-accent); border-color: var(--pulse-accent); color: #fff; }\n.proj-bar-val { flex: none; color: var(--pulse-muted); font-variant-numeric: tabular-nums; font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); }\n.proj-bar-track { height: 7px; border-radius: 999px; background: color-mix(in srgb, var(--pulse-border) 55%, transparent); overflow: hidden; }\n.proj-bar-fill { height: 100%; border-radius: 999px; transition: width 180ms ease; }\n.proj-bars-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); padding: 4px 7px 2px; }\n.proj-donut-layout { display: flex; flex-direction: column; align-items: stretch; gap: 14px; min-width: 0; }\n.proj-donut-box { position: relative; width: 156px; height: 156px; flex: none; align-self: center; }\n.proj-donut-svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }\n.proj-donut-track { fill: none; stroke: color-mix(in srgb, var(--pulse-border) 60%, transparent); stroke-width: 14; }\n.proj-donut-seg { fill: none; stroke-width: 14; cursor: pointer; transition: stroke-width 140ms ease, opacity 140ms ease; }\n.proj-donut-seg.is-active { stroke-width: 17; }\n.proj-donut-seg.is-dimmed { opacity: .45; }\n.proj-donut-center { position: absolute; inset: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; gap: 3px; }\n.proj-donut-center strong { font-size: calc(15px * var(--pulse-usage-font-scale, 1)); font-weight: 650; font-variant-numeric: tabular-nums; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.proj-donut-center span { font-size: calc(10.5px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.proj-donut-list { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; max-height: 170px; overflow-y: auto; padding-right: 4px; align-content: start; box-sizing: border-box; }\n.proj-donut-list.is-all { max-height: 270px; }\n.proj-donut-item { display: flex; align-items: center; gap: 7px; padding: 3px 6px; border-radius: 6px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); cursor: pointer; min-width: 0; max-width: 100%; box-sizing: border-box; overflow: hidden; }\n.proj-donut-item:hover, .proj-donut-item.is-active { background: var(--pulse-hover); }\n.proj-donut-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }\n.proj-donut-item-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.proj-donut-item-pct { flex: none; color: var(--pulse-muted); font-variant-numeric: tabular-nums; }\n.page[data-display-mode="fullpage"] { max-width: 100%; }\n.page[data-display-mode="fullpage"] #close { display: none; }\n@media (min-width: 651px) {\n  .page[data-display-mode="fullpage"] { padding: 28px max(32px, calc((100% - 1296px) / 2)) 24px; }\n}\n@media (max-width: 720px) {\n  .proj-detail-grid { grid-template-columns: 1fr; }\n}\n@media (max-width: 650px) {\n  .page { padding: 20px 18px; }\n  .totals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 0; }\n  .metric:nth-child(3) { border-left: 0; }\n  .value { font-size: calc(23px * var(--pulse-usage-font-scale, 1)); }\n  .section-head { align-items: flex-start; flex-wrap: wrap; }\n  .chart-controls { width: 100%; justify-content: space-between; }\n  .footer { align-items: flex-start; flex-direction: column; gap: 5px; }\n  .selected { align-items: flex-start; }\n  .chart { gap: 8px; }\n}\n@media (max-width: 520px) {\n  .usage-intro { padding: 14px; }\n  .intro-bottom { align-items: flex-start; }\n  .intro-bottom span { line-height: 1.5; }\n}\n@media (prefers-reduced-motion: reduce) {\n  .other-models:not([hidden]),\n  .hourly-content:not([hidden]) { animation: none !important; }\n  .bar-segment,\n  .proj-bar-fill,\n  .hourly-chevron,\n  .picker-chevron,\n  .year-chevron,\n  .proj-bar-caret,\n  .hourly-pt,\n  .proj-donut-seg { transition: opacity 100ms ease !important; }\n  .modal-layer,\n  .modal-card,\n  .tip { transition: opacity 90ms ease !important; }\n  .heat button { transition: background-color 140ms ease !important; }\n  button,\n  #usage-intro-done { transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease !important; }\n  button:active,\n  #usage-intro-done:active,\n  .heat button:not(:disabled):hover,\n  .heat button:not(:disabled):focus-visible { transform: none !important; scale: none !important; }\n}\n';
-
-  // src/ui/usage-modal/usage-sections.css
-  var usage_sections_default = `:host {
-  display: block; height: 100%; color: var(--pulse-foreground);
-  font: calc(13px * var(--pulse-usage-font-scale, 1))/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  font-variant-numeric: tabular-nums;
-}
-* { box-sizing: border-box; }
-button, select { font: inherit; color: inherit; border: 1px solid var(--pulse-border); background: transparent; border-radius: 7px; }
-button { cursor: pointer; transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 120ms cubic-bezier(.23, 1, .32, 1); }
-button:active { transform: scale(.97); }
-button:focus-visible, select:focus-visible { outline: 2px solid var(--pulse-accent); outline-offset: 3px; }
-button[disabled] { opacity: .35; cursor: default; }
-
-.page { padding: 28px 32px 24px; height: 100%; max-height: none; display: flex; flex-direction: column; scrollbar-gutter: stable; overflow: auto; background: var(--pulse-background); }
-.page > * { flex: none; }
-.top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
-.eyebrow { font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); letter-spacing: 1.7px; margin-bottom: 7px; }
-h1 { font-size: calc(24px * var(--pulse-usage-font-scale, 1)); letter-spacing: -.7px; line-height: 1.2; margin: 0 0 8px; font-weight: 600; }
-.sub { font-size: calc(12px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; }
-.top-controls { display: flex; align-items: center; gap: 8px; flex-direction: row-reverse; flex-wrap: wrap; flex: none; }
-.actions { display: flex; gap: 8px; align-items: center; }
-.actions button { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; padding: 0; line-height: 1; border-radius: 8px; color: var(--pulse-muted); }
-.actions button:hover { background: var(--pulse-hover); color: var(--pulse-foreground); }
-.actions svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.locale-label { display: block; min-width: 16px; height: 16px; line-height: 16px; text-align: center; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); }
-.live-dot { display: inline-block; width: 5px; height: 5px; background: var(--pulse-success); border-radius: 50%; margin-right: 6px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pulse-success) 22%, transparent); }
-
-.account-switcher { margin-inline-start: auto; margin-bottom: 6px; padding: 3px 8px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); border-radius: 6px; border: 1px solid var(--pulse-border); background: var(--pulse-control); color: var(--pulse-foreground); max-width: 240px; min-width: 0; text-overflow: ellipsis; }
-.account-switcher[hidden] { display: none; }
-.btn-manual { display: inline-flex; align-items: center; gap: 6px; width: auto; flex: 0 0 auto; white-space: nowrap; padding: 0 12px; height: 32px; line-height: 32px; border-radius: 8px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); font-weight: 500; color: var(--pulse-foreground); background: var(--pulse-control); border: 1px solid var(--pulse-border); }
-.btn-manual:hover { background: var(--pulse-hover); }
-.btn-manual svg { display: block; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-
-.tabs-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--pulse-separator); margin: 25px 0 22px; }
-.tabs { display: flex; gap: 22px; margin: 0; border-bottom: 0; min-width: 0; }
-.tabs button { border: 0; border-radius: 0; background: transparent; color: var(--pulse-muted); padding: 0 2px 11px; position: relative; }
-.tabs button:hover { color: var(--pulse-foreground); }
-.tabs button[aria-selected=true] { color: var(--pulse-foreground); font-weight: 600; }
-.tabs button[aria-selected=true]:after { content: ''; position: absolute; height: 2px; background: var(--pulse-accent); bottom: -1px; left: 0; right: 0; }
-
-.totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--pulse-border); border-radius: 12px; padding: 17px 0; margin-bottom: 28px; background: color-mix(in srgb, var(--pulse-control) 65%, transparent); }
-.metric { padding: 0 20px; }
-.metric + .metric { border-left: 1px solid var(--pulse-separator); }
-.metric label { color: var(--pulse-muted); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); }
-.value { font-size: calc(27px * var(--pulse-usage-font-scale, 1)); letter-spacing: -.9px; margin: 5px 0 0; font-weight: 550; font-variant-numeric: tabular-nums; }
-.unit { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-left: 5px; font-weight: 400; letter-spacing: 0; }
-.usage-waiting { display: grid; place-items: center; min-height: 260px; color: var(--pulse-muted); font-size: calc(12px * var(--pulse-usage-font-scale, 1)); }
-.usage-waiting[hidden] { display: none; }
-
-section[hidden] { display: none; }
-.section-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin: 0 0 18px; }
-h2 { font-size: calc(14px * var(--pulse-usage-font-scale, 1)); font-weight: 600; letter-spacing: -.2px; margin: 0; }
-.muted { font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }
-.seg { display: flex; padding: 3px; background: var(--pulse-hover); border-radius: 8px; gap: 2px; }
-.seg button { border: 0; padding: 4px 12px; border-radius: 5px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }
-.seg button:hover:not([aria-pressed=true]) { color: var(--pulse-foreground); }
-.seg button[aria-pressed=true] { background: var(--pulse-control); color: var(--pulse-foreground); box-shadow: 0 1px 3px #0001; }
-select { padding: 4px 8px; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); background: var(--pulse-background); }
-
-.heat-wrap { overflow-x: auto; padding: 3px 3px 7px; }
-.calendar { min-width: 680px; }
-.months { display: grid; margin-left: 31px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); margin-bottom: 7px; }
-.months span { white-space: nowrap; }
-.heat-row { display: flex; gap: 9px; }
-.weekdays { display: grid; grid-template-rows: repeat(7, 1fr); width: 22px; flex: none; font-size: calc(9px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }
-.heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 3px; width: 100%; }
-.heat button { position: relative; border: 0; border-radius: 3px; padding: 0; min-width: 0; aspect-ratio: 1; background: var(--pulse-hover); outline-offset: 1px; transition: transform 120ms cubic-bezier(.22, 1, .36, 1), background-color 140ms ease, box-shadow 140ms ease; }
-.heat button:not(:disabled):hover, .heat button:not(:disabled):focus-visible { transform: scale(1.16); z-index: 2; box-shadow: 0 0 0 1px var(--pulse-border); }
-.heat button[data-level="1"], .swatch[data-level="1"] { background: color-mix(in srgb, var(--pulse-accent) 22%, var(--pulse-hover)); }
-.heat button[data-level="2"], .swatch[data-level="2"] { background: color-mix(in srgb, var(--pulse-accent) 45%, var(--pulse-hover)); }
-.heat button[data-level="3"], .swatch[data-level="3"] { background: color-mix(in srgb, var(--pulse-accent) 68%, var(--pulse-hover)); }
-.heat button[data-level="4"], .swatch[data-level="4"] { background: var(--pulse-accent); }
-.heat button.future { opacity: .25; cursor: default; }
-.heat.week { grid-template-columns: repeat(26, minmax(0, 1fr)) !important; grid-template-rows: repeat(2, 1fr); grid-auto-flow: row; }
-.week button { max-height: 28px; aspect-ratio: 1; }
-.heat-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 10px 0 27px; font-size: calc(10px * var(--pulse-usage-font-scale, 1)); color: var(--pulse-muted); }
-.scale { display: flex; align-items: center; gap: 4px; }
-.swatch { width: 11px; height: 11px; border-radius: 3px; background: var(--pulse-hover); }
-.selected { padding: 16px 18px; border: 1px solid var(--pulse-border); border-radius: 10px; display: flex; justify-content: space-between; gap: 16px; align-items: center; background: color-mix(in srgb, var(--pulse-control) 50%, transparent); }
-.selected button { border: 0; color: var(--pulse-accent); font-size: calc(12px * var(--pulse-usage-font-scale, 1)); padding: 5px; }
-.selected button:hover { text-decoration: underline; }
-.selected .title { font-weight: 500; margin-bottom: 3px; }
-.selected strong { font-weight: 550; }
-
-.year-picker { position: relative; flex: none; }
-.year-trigger { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 76px; height: 30px; padding: 0 10px; background: var(--pulse-control); color: var(--pulse-foreground); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); border-radius: 8px; }
-.year-trigger:hover, .year-trigger[aria-expanded=true] { background: var(--pulse-hover); }
-.year-chevron { width: 12px; height: 12px; fill: none; stroke: var(--pulse-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms cubic-bezier(.23, 1, .32, 1); }
-.year-trigger[aria-expanded=true] .year-chevron { transform: rotate(180deg); }
-.year-menu { position: fixed; inset: auto; margin: 0; padding: 5px; width: 112px; max-height: 232px; overflow-y: auto; border: 1px solid var(--pulse-border); border-radius: 10px; background: var(--pulse-menu); color: var(--pulse-foreground); box-shadow: 0 8px 26px var(--pulse-shadow); transform-origin: top right; pointer-events: none; opacity: 0; transition: opacity 90ms ease, display 90ms, overlay 90ms; transition-behavior: allow-discrete; }
-.year-menu:is(:popover-open, .\\:popover-open) { pointer-events: auto; opacity: 1; }
-.year-menu::backdrop { background: transparent; pointer-events: none; }
-.year-option { width: 100%; border: 0; border-radius: 6px; padding: 7px 9px; display: flex; align-items: center; justify-content: space-between; gap: 18px; font-size: calc(12px * var(--pulse-usage-font-scale, 1)); text-align: left; background: transparent; color: var(--pulse-foreground); font-variant-numeric: tabular-nums; }
-.year-option:hover, .year-option:focus-visible { background: var(--pulse-hover); }
-.year-option[aria-selected=true] { background: color-mix(in srgb, var(--pulse-accent) 12%, var(--pulse-menu)); }
-.year-check { color: var(--pulse-accent); width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
-.year-option[aria-selected=true] .year-check { opacity: 1; }
-@starting-style { .year-menu:popover-open { opacity: 0; } }
-@media (prefers-reduced-motion: no-preference) {
-  .year-menu { scale: .97; transition: opacity 130ms ease, scale 150ms cubic-bezier(.2, .9, .3, 1), display 150ms, overlay 150ms; transition-behavior: allow-discrete; }
-  .year-menu:is(:popover-open, .\\:popover-open) { scale: 1; }
-  @starting-style { .year-menu:popover-open { opacity: 0; scale: .96; } }
-}
-
-.usage-intro { margin: 18px 0 0; padding: 17px 20px 14px; border: 1px solid var(--pulse-border); border-radius: 12px; background: var(--pulse-control); }
-.usage-intro[hidden] { display: none; }
-.intro-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
-.intro-heading h2 { font-size: calc(13px * var(--pulse-usage-font-scale, 1)); font-weight: 550; margin: 0; }
-.intro-mark { display: flex; color: var(--pulse-accent); }
-.intro-mark svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
-.intro-copy { display: grid; gap: 5px; color: var(--pulse-muted); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); line-height: 1.65; }
-.intro-copy p { margin: 0; }
-.intro-bottom { display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-top: 11px; }
-.intro-bottom span { margin-right: auto; color: var(--pulse-warning); font-size: calc(11px * var(--pulse-usage-font-scale, 1)); }
-#usage-intro-done { padding: 6px 13px; min-height: 30px; border: 1px solid var(--pulse-border); border-radius: 7px; background: var(--pulse-hover); color: var(--pulse-foreground); font: inherit; font-size: calc(11px * var(--pulse-usage-font-scale, 1)); cursor: pointer; transition: background-color 140ms ease, transform 120ms ease; }
-#usage-intro-done:hover { background: var(--pulse-selected); }
-#usage-intro-done:active { transform: scale(.98); }
-#usage-intro-done:disabled { opacity: .55; cursor: wait; }
-@media (max-width: 520px) {
-  .top { flex-direction: column; gap: 12px; }
-  .top-controls { width: 100%; justify-content: space-between; flex-direction: row-reverse; }
-  .tabs-bar { margin: 16px 0; gap: 10px; }
-}
-`;
-
-  // src/ui/usage-modal/dom-shell.ts
-  function resolveUsageBridge(options) {
-    return options?.bridge || window.agPulseBridge || window.agPulseHost;
-  }
-  var BACKDROP_STYLE = "#usage-dashboard{position:fixed;inset:0;margin:auto;width:min(1040px,calc(100vw - 40px));max-width:none;height:min(820px,calc(100dvh - 64px));max-height:none;border-radius:18px;pointer-events:none;opacity:0;transition:opacity 100ms ease,display 100ms,overlay 100ms;transition-behavior:allow-discrete}#usage-dashboard:is(:popover-open,.\\:popover-open,[open]){pointer-events:auto;opacity:1}@starting-style{#usage-dashboard:popover-open,#usage-dashboard[open]{opacity:0}}#usage-dashboard::backdrop{background:#0006;backdrop-filter:blur(3px);pointer-events:none;opacity:0;transition:opacity 100ms ease,display 100ms,overlay 100ms;transition-behavior:allow-discrete}#usage-dashboard:is(:popover-open,.\\:popover-open,[open])::backdrop{pointer-events:auto;opacity:1}@starting-style{#usage-dashboard:popover-open::backdrop,#usage-dashboard[open]::backdrop{opacity:0}}@media(prefers-reduced-motion:no-preference){#usage-dashboard{scale:.98;transition:opacity 140ms ease,scale 150ms cubic-bezier(.2,.9,.3,1),display 150ms,overlay 150ms;transition-behavior:allow-discrete}#usage-dashboard:is(:popover-open,.\\:popover-open,[open]){scale:1}@starting-style{#usage-dashboard:popover-open,#usage-dashboard[open]{opacity:0;scale:.975}}#usage-dashboard::backdrop{transition:opacity 140ms ease,display 140ms,overlay 140ms;transition-behavior:allow-discrete}}@media(max-width:640px){#usage-dashboard{width:calc(100vw - 12px);height:calc(100dvh - 12px);border-radius:12px}}@media(max-width:480px){#usage-dashboard{width:100vw;height:100dvh;border-radius:0;border-width:0}}";
-  var DIALOG_STYLE = "box-sizing:border-box;overflow:hidden;visibility:visible;padding:0;border:1px solid var(--pulse-border);background:var(--pulse-background);color:var(--pulse-foreground);box-shadow:0 24px 100px #0006";
-  var FULLPAGE_HOST_STYLE = '#usage-dashboard[data-display-mode="fullpage"]{position:static;display:block;width:100%;max-width:none;height:100%;max-height:none;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:var(--pulse-background);color:var(--pulse-foreground);overflow:hidden;opacity:1;pointer-events:auto}';
-  var FULLPAGE_DIALOG_STYLE = "box-sizing:border-box;overflow:hidden;visibility:visible;padding:0;border:0;background:var(--pulse-background);color:var(--pulse-foreground);box-shadow:none";
-  var PAGE_MARKUP = '<header class="top"><div><div class="eyebrow">ANTIGRATIVE DASHBOARD</div><h1 id="title"></h1><div class="sub"><span class="live-dot"></span><span id="subtitle"></span></div></div><div class="top-controls"><div class="actions"><button id="locale" type="button" aria-label="Language"><span id="locale-label" class="locale-label">\u4E2D</span></button><button id="refresh" type="button" aria-label="Refresh"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 7a5 5 0 1 0-1.3 4.4M13 3v4H9"/></svg></button><button id="font-settings" type="button" class="font-trigger" aria-label="Font size settings"><span>Aa</span></button><button id="close" type="button" aria-label="Close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button></div><button id="add-manual" type="button" class="btn-manual" aria-label="Add manual usage"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg><span id="add-manual-label">\u5F55\u5165\u8FDC\u7A0B\u7528\u91CF</span></button></div></header><div class="tabs-bar"><nav class="tabs" role="tablist"><button id="overview-tab" role="tab" aria-controls="overview"></button><button id="details-tab" role="tab" aria-controls="details"></button></nav><span id="account-switcher-slot"></span></div><div class="totals" id="totals"></div><section id="usage-waiting" class="usage-waiting" role="status" hidden></section><section id="overview" role="tabpanel"><div class="section-head"><div><h2 id="activity-title"></h2><div class="muted" id="heat-sub"></div></div><div class="chart-controls"><div class="seg" id="heat-controls"><button data-heat="day"></button><button data-heat="week"></button></div><div class="year-picker"><button id="year" type="button" class="year-trigger" aria-label="Year" aria-haspopup="listbox" aria-controls="year-menu" aria-expanded="false"><span id="year-label"></span><svg class="year-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="year-menu" class="year-menu" role="listbox" aria-label="Year" popover="manual"></div></div></div></div><div class="heat-wrap"><div class="calendar"><div class="months" id="months"></div><div class="heat-row"><div class="weekdays" id="weekdays"></div><div class="heat" id="heat"></div></div></div></div><div class="heat-footer"><span id="heat-summary"></span><div class="scale"><span id="less"></span><i class="swatch"></i><i class="swatch" data-level="1"></i><i class="swatch" data-level="2"></i><i class="swatch" data-level="3"></i><i class="swatch" data-level="4"></i><span id="more"></span></div></div><div class="selected"><div><div class="title" id="selection-title"></div><span class="muted" id="selection-value"></span></div><button id="selection-details"></button></div></section><section id="details" role="tabpanel" hidden><div class="section-head"><div class="detail-heading-group"><div class="detail-picker-row"><div class="picker" id="dim-picker"><button id="dim-trigger" type="button" class="picker-trigger" aria-haspopup="listbox" aria-controls="dim-menu" aria-expanded="false"><span id="dim-label"></span><svg class="picker-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="dim-menu" class="picker-menu" role="listbox" popover="manual"></div></div><div class="picker" id="model-view-picker"><button id="model-view-trigger" type="button" class="picker-trigger" aria-haspopup="listbox" aria-controls="model-view-menu" aria-expanded="false"><span id="model-view-label"></span><svg class="picker-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="model-view-menu" class="picker-menu" role="listbox" popover="manual"></div></div><span id="project-scope-note" class="project-scope-note" hidden></span></div><div id="detail-summary-row" class="detail-summary-row"></div></div><div class="chart-controls"><div class="range"><button id="previous" aria-label="Previous">\u2039</button><strong id="range-label"></strong><button id="next" aria-label="Next">\u203A</button></div><div id="custom-range-controls" class="custom-range-controls" hidden></div><div class="seg" id="period-controls"><button data-period="day"></button><button data-period="week"></button><button data-period="month"></button><button data-period="custom"></button></div></div></div><div class="legend" id="legend"></div><div class="chart-wrap"><div class="chart"><div class="axis" id="axis"></div><div class="plot" id="plot"></div></div></div><div class="hourly-section" id="hourly-section"><div class="hourly-header"><button id="hourly-toggle" type="button" class="hourly-toggle" aria-expanded="false"><span id="hourly-toggle-title"></span><span id="hourly-title"></span><span id="hourly-subtitle" class="muted"></span><svg class="hourly-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div class="hourly-mode-seg" id="hourly-mode-controls"><button id="hourly-mode-combined" type="button" data-hourly-mode="combined"></button><button id="hourly-mode-today" type="button" data-hourly-mode="today"></button></div></div><div id="hourly-content" class="hourly-content" hidden><div class="hourly-chart-wrap" id="hourly-chart"></div></div></div><section class="project-detail-section" id="project-detail-section" hidden></section><div class="table-wrap"><table class="table"><thead><tr id="table-head"></tr></thead><tbody id="table-body"></tbody></table></div><div class="manual-section" id="manual-section"><div class="section-head"><h2 id="manual-title"></h2></div><div class="table-wrap"><table class="table" id="manual-table"><thead><tr id="manual-table-head"></tr></thead><tbody id="manual-table-body"></tbody></table></div></div></section><div id="manual-modal" class="modal-layer" hidden></div><div class="alert" id="alert" hidden></div><footer class="footer"><span id="coverage"></span><span id="timezone"></span></footer><div class="tip" id="tip" role="status" popover="manual" hidden></div>';
-  var INTRO_MARKUP = '<div class="intro-heading"><span class="intro-mark" aria-hidden="true"><svg viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5" ry="2"/><path d="M3 4v8c0 2 10 2 10 0V4M3 8c0 2 10 2 10 0"/></svg></span><h2 id="usage-intro-title"></h2></div><div class="intro-copy"><p id="usage-intro-history"></p><p id="usage-intro-scope"></p><p id="usage-intro-storage"></p></div><div class="intro-bottom"><span id="usage-intro-error" role="status"></span><button id="usage-intro-done" type="button"></button></div>';
-  function createDomNode(tag, className = "", content) {
-    const n = document.createElement(tag);
-    if (className) n.className = className;
-    if (content !== void 0) n.textContent = content;
-    return n;
-  }
-  function el(tag, attrs = {}) {
-    const n = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k === "text") n.textContent = String(v ?? "");
-      else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : String(v));
-    }
-    return n;
-  }
-  function mountUsageDomShell(options, state) {
-    const { root, language, setMarkup: setMarkup2 } = options;
-    const isFullpage = options.displayMode === "fullpage";
-    const dialog = document.createElement("dialog");
-    dialog.id = "usage-dashboard";
-    if (isFullpage) {
-      dialog.dataset.displayMode = "fullpage";
-    } else {
-      dialog.setAttribute("popover", "manual");
-      dialog.setAttribute("aria-modal", "true");
-    }
-    dialog.setAttribute("aria-label", language.language === "zh-CN" ? "\u7528\u91CF\u7EDF\u8BA1" : "Token usage");
-    dialog.style.cssText = isFullpage ? FULLPAGE_DIALOG_STYLE : DIALOG_STYLE;
-    const shell = document.createElement("div");
-    const view = shell.attachShadow({ mode: "open" });
-    shell.style.height = "100%";
-    dialog.append(shell);
-    root.append(dialog);
-    const backdrop = document.createElement("style");
-    backdrop.textContent = isFullpage ? FULLPAGE_HOST_STYLE : BACKDROP_STYLE;
-    root.append(backdrop);
-    const css2 = document.createElement("style");
-    css2.textContent = `${usage_sections_default}
-${usage_default}
-${FONT_POPOVER_CSS}`;
-    view.append(css2);
-    const page = document.createElement("div");
-    page.className = "page";
-    if (isFullpage) page.dataset.displayMode = "fullpage";
-    setMarkup2(page, PAGE_MARKUP);
-    if (isFullpage) {
-      const closeBtn = page.querySelector("#close");
-      if (closeBtn) closeBtn.hidden = true;
-    }
-    view.append(page);
-    const accSelect = el("select", { id: "account-switcher", class: "account-switcher", "aria-label": "Account", hidden: true });
-    page.querySelector("#account-switcher-slot")?.replaceWith(accSelect);
-    page.querySelector("#custom-range-controls")?.append(
-      el("input", { type: "date", id: "custom-start", "aria-label": "Start date" }),
-      el("span", { text: "\u2013" }),
-      el("input", { type: "date", id: "custom-end", "aria-label": "End date" })
-    );
-    buildManualModalDom(page);
-    const intro = document.createElement("section");
-    intro.id = "usage-intro";
-    intro.className = "usage-intro";
-    intro.hidden = true;
-    intro.setAttribute("aria-labelledby", "usage-intro-title");
-    setMarkup2(intro, INTRO_MARKUP);
-    page.querySelector(".top")?.after(intro);
-    const $ = (id) => view.getElementById(id);
-    const text = (id, value) => {
-      const target = $(id);
-      if (target && target.textContent !== value) target.textContent = value;
-    };
-    const zh = () => options.language.language === "zh-CN";
-    const w = (cn, en) => zh() ? cn : en;
-    const full = (n) => Number(n || 0).toLocaleString(zh() ? "zh-CN" : "en-US");
-    const compactNum = (n) => {
-      const num = Number(n || 0);
-      return compact(num, { localeFallback: zh() ? "zh-CN" : "en-US" });
-    };
-    return {
-      dialog,
-      backdrop,
-      view,
-      page,
-      intro,
-      context: { root, dialog, view, page, intro, options, state, $, text, zh, w, full, compactNum }
-    };
-  }
-  function buildManualModalDom(page) {
-    const modalCard = el("div", { class: "modal-card" });
-    const manualForm = el("form", { class: "modal-form", id: "manual-form" });
-    const makeField = (rowAttrs, lblId, inputNode) => {
-      const row = el("div", rowAttrs);
-      row.append(el("label", { for: inputNode.id, id: lblId }), inputNode);
-      return row;
-    };
-    const accRow = makeField({ class: "form-row", id: "manual-account-row" }, "lbl-account", el("select", { id: "manual-account" }));
-    const projRow = makeField({ class: "form-row" }, "lbl-project", el("input", { type: "text", id: "manual-project", required: true }));
-    const dtRow = makeField({ class: "form-row" }, "lbl-datetime", el("input", { type: "datetime-local", id: "manual-datetime", required: true }));
-    const modelRow = makeField({ class: "form-row" }, "lbl-model", el("input", { type: "text", id: "manual-model", list: "manual-model-list", required: true }));
-    modelRow.append(el("datalist", { id: "manual-model-list" }));
-    const twoCol = el("div", { class: "form-row two-col" });
-    for (const [fid, lid] of [["manual-prompt", "lbl-prompt"], ["manual-completion", "lbl-completion"]]) {
-      const cell = el("div");
-      cell.append(el("label", { for: fid, id: lid }), el("input", { type: "number", id: fid, min: "0", required: true }));
-      twoCol.append(cell);
-    }
-    const cacheRow = makeField({ class: "form-row" }, "lbl-cache", el("input", { type: "number", id: "manual-cache", min: "0" }));
-    const noteRow = makeField({ class: "form-row" }, "lbl-note", el("input", { type: "text", id: "manual-note" }));
-    const modalActions = el("div", { class: "modal-actions" });
-    modalActions.append(
-      el("button", { type: "button", id: "manual-cancel" }),
-      el("button", { type: "submit", id: "manual-submit", class: "btn-primary" })
-    );
-    manualForm.append(accRow, projRow, dtRow, modelRow, twoCol, cacheRow, noteRow, modalActions);
-    modalCard.append(el("h3", { class: "modal-title", id: "manual-modal-title" }), manualForm);
-    page.querySelector("#manual-modal")?.append(modalCard);
-  }
-  function renderOnboardingGuide(ctx, palette) {
-    const { options, state, intro, $, text, w, view, dialog } = ctx;
-    const replayGuide = window.__agPulseUsageGuidePreview === true;
-    const signature = `${options.language.language}|${palette.themeSignature(ctx.root.host)}`;
-    if (replayGuide && signature !== state.guideSignature) {
-      state.guideDismissed = false;
-      state.guideError = false;
-    }
-    state.guideSignature = signature;
-    intro.hidden = state.guideDismissed;
-    text("usage-intro-title", w("\u5148\u4E86\u89E3\u4F60\u7684\u7528\u91CF\u7EDF\u8BA1", "About your token usage"));
-    text(
-      "usage-intro-history",
-      w(
-        "\u81EA\u52A8\u6C47\u603B\u5F53\u524D\u8D26\u53F7\u53EF\u8BFB\u53D6\u7684\u672C\u5730\u5386\u53F2\u5BF9\u8BDD\uFF0C\u518D\u6301\u7EED\u8BB0\u5F55\u65B0\u8BF7\u6C42\uFF1B\u5DF2\u5220\u9664\u6216\u7F3A\u5931\u7684\u5386\u53F2\u53EF\u80FD\u65E0\u6CD5\u8865\u9F50\u3002",
-        "Available local conversations for this account are imported automatically, then new requests are recorded. Deleted or missing history may leave gaps."
-      )
-    );
-    text(
-      "usage-intro-scope",
-      w(
-        "\u7EDF\u8BA1\u4EC5\u4EE3\u8868\u672C\u673A\u5DF2\u8BB0\u5F55\u7684 Token \u7528\u91CF\uFF0C\u4E0D\u662F\u8D26\u6237\u8D26\u5355\uFF1B\u5929\u3001\u5468\u3001\u6708\u5747\u6309 UTC+8 \u5212\u5206\u3002",
-        "Totals cover usage recorded on this device, not account billing. Days, weeks and months use UTC+8."
-      )
-    );
-    text(
-      "usage-intro-storage",
-      w(
-        "\u53EA\u5728\u672C\u5730\u4FDD\u5B58\u65F6\u95F4\u3001\u6A21\u578B\u548C\u7528\u91CF\uFF0C\u4E0D\u4FDD\u5B58\u5BF9\u8BDD\u6B63\u6587\u3002\u5220\u9664\u5BF9\u8BDD\u4E0D\u4F1A\u6263\u9664\u5DF2\u8BB0\u5F55\u7684\u7528\u91CF\u3002",
-        "Only times, models and usage counters are saved locally, never conversation text. Deleting a chat does not subtract usage already recorded."
-      )
-    );
-    text("usage-intro-done", state.guideSaving ? w("\u4FDD\u5B58\u4E2D\u2026", "Saving\u2026") : w("\u77E5\u9053\u4E86", "Got it"));
-    text("usage-intro-error", state.guideError ? w("\u672A\u80FD\u4FDD\u5B58\uFF0C\u8BF7\u518D\u8BD5\u4E00\u6B21\u3002", "Could not save. Please try again.") : "");
-    const doneBtn = $("usage-intro-done");
-    if (doneBtn) {
-      doneBtn.disabled = state.guideSaving;
-      doneBtn.setAttribute("aria-busy", String(state.guideSaving));
-    }
-    void view;
-    void dialog;
-  }
-  function renderKpiCards(ctx, value) {
-    const { $, w, compactNum, full } = ctx;
-    const totalsEl = $("totals");
-    if (!totalsEl) return;
-    const kpis = [
-      [w("\u4ECA\u65E5\u7528\u91CF", "Today"), value.todayTokens],
-      [w("\u672C\u5468\u7528\u91CF", "This week"), value.weekTokens],
-      [w("\u672C\u6708\u7528\u91CF", "This month"), value.monthTokens],
-      [w("\u7D2F\u8BA1\u7528\u91CF", "All time"), value.totalTokens]
-    ];
-    if (totalsEl.children.length !== 4) {
-      totalsEl.replaceChildren(
-        ...kpis.map(([label, total]) => {
-          const metric = createDomNode("div", "metric");
-          const val = createDomNode("div", "value", compactNum(total));
-          val.append(createDomNode("span", "unit", "Token"));
-          metric.append(createDomNode("label", "", label), val);
-          metric.title = `${full(total)} Token`;
-          return metric;
-        })
-      );
-      return;
-    }
-    [...totalsEl.children].forEach((node, idx) => {
-      const metric = node;
-      const [label, total] = kpis[idx];
-      const lbl = metric.querySelector("label");
-      const val = metric.querySelector(".value");
-      if (lbl && lbl.textContent !== label) lbl.textContent = label;
-      const unit = val?.querySelector(".unit");
-      const compactText = compactNum(total);
-      if (!val || !unit) {
-        const nextVal = createDomNode("div", "value", compactText);
-        nextVal.append(createDomNode("span", "unit", "Token"));
-        val ? val.replaceWith(nextVal) : metric.append(nextVal);
-      } else if (val.firstChild?.nodeType === 3) {
-        if (val.firstChild.textContent !== compactText) val.firstChild.textContent = compactText;
-      } else {
-        val.replaceChildren(document.createTextNode(compactText), unit);
-      }
-      const title = `${full(total)} Token`;
-      if (metric.title !== title) metric.title = title;
-    });
-  }
-
-  // src/ui/usage-modal/localize-modal.ts
-  function renderWaitingState(ctx) {
-    const { $, text, w } = ctx;
-    const ov = $("overview");
-    const det = $("details");
-    const wait = $("usage-waiting");
-    if (ov) ov.hidden = true;
-    if (det) det.hidden = true;
-    if (wait) wait.hidden = false;
-    text("usage-waiting", w("\u6B63\u5728\u91CD\u65B0\u8FDE\u63A5\u7EDF\u8BA1\u2026", "Reconnecting usage\u2026"));
-    text("subtitle", w("\u6B63\u5728\u91CD\u65B0\u8FDE\u63A5\u672C\u673A\u7EDF\u8BA1", "Reconnecting local usage"));
-    text("coverage", "");
-    text("timezone", "");
-    const alertEl = $("alert");
-    if (alertEl) alertEl.hidden = true;
-    for (const metric of $("totals")?.children || []) {
-      metric.title = "";
-      metric.querySelector(".value")?.replaceChildren(createDomNode("span", "", "\u2014"));
-    }
-  }
-  function renderSubtitle(ctx, hostLabel = ctx.options.hostLabel ?? "Antigravity") {
-    const { $, state, text, w } = ctx;
-    const value = state.value;
-    if (!value) return;
-    const hasMultipleAccounts = Array.isArray(value.accounts) ? value.accounts.length > 1 : !($("account-switcher")?.hidden ?? true);
-    text(
-      "subtitle",
-      hasMultipleAccounts ? w(`\u672C\u673A ${hostLabel}`, `Local ${hostLabel}`) : w(`\u672C\u673A ${hostLabel} \xB7 \u5F53\u524D\u8D26\u53F7`, `Local ${hostLabel} \xB7 current account`)
-    );
-  }
-  function renderHeaderAndLabels(ctx, hostLabel) {
-    const { $, view, dialog, state, text, zh, w, full, compactNum } = ctx;
-    const value = state.value;
-    if (!value) return;
-    text("title", w("\u7528\u91CF\u7EDF\u8BA1", "Token usage"));
-    dialog.setAttribute("aria-label", w("\u7528\u91CF\u7EDF\u8BA1", "Token usage"));
-    renderSubtitle(ctx, hostLabel);
-    text("overview-tab", w("\u6D3B\u52A8\u6982\u89C8", "Activity"));
-    text("details-tab", w("\u7528\u91CF\u8BE6\u60C5", "Usage details"));
-    text("activity-title", w("Token \u6D3B\u52A8", "Token activity"));
-    text("dim-model", w("\u6309\u6A21\u578B\u7EDF\u8BA1", "By Model"));
-    text("dim-user", w("\u6309\u7528\u6237\u7EDF\u8BA1", "By User"));
-    const mvControls = $("model-view-controls");
-    if (mvControls) mvControls.hidden = state.dimension !== "model";
-    $("model-view-simple")?.setAttribute("aria-pressed", String(state.modelViewMode === "simple"));
-    $("model-view-detailed")?.setAttribute("aria-pressed", String(state.modelViewMode === "detailed"));
-    text("model-view-simple", w("\u7B80\u6613", "Simple"));
-    text("model-view-detailed", w("\u8BE6\u7EC6", "Detailed"));
-    text("locale-label", zh() ? "EN" : "\u4E2D");
-    for (const [id, label] of [
-      ["locale", w("\u5207\u6362\u5230\u82F1\u6587", "Switch to Chinese")],
-      ["refresh", w("\u5237\u65B0\u7528\u91CF", "Refresh usage")],
-      ["font-settings", w("\u5B57\u4F53\u5927\u5C0F\u8BBE\u7F6E", "Font size settings")],
-      ["close", w("\u5173\u95ED", "Close")]
-    ]) {
-      const btn = $(id);
-      if (btn) {
-        btn.setAttribute("aria-label", label);
-        btn.title = label;
-      }
-    }
-    text("less", w("\u5C11", "Less"));
-    text("more", w("\u591A", "More"));
-    text("selection-details", w("\u67E5\u770B\u8FD9\u6BB5\u7528\u91CF \u2192", "View usage \u2192"));
-    text("add-manual-label", w("\u5F55\u5165\u8FDC\u7A0B\u7528\u91CF", "Remote Usage"));
-    text("manual-modal-title", w("\u5F55\u5165\u8FDC\u7A0B\u9879\u76EE\u7528\u91CF", "Record Remote Usage"));
-    text("lbl-account", w("\u5F52\u5C5E\u8D26\u53F7", "Account"));
-    text("lbl-project", w("\u9879\u76EE\u540D\u79F0", "Project Name"));
-    text("lbl-datetime", w("\u65F6\u95F4", "Datetime"));
-    text("lbl-model", w("\u6A21\u578B", "Model"));
-    text("lbl-prompt", w("Prompt Tokens (\u8F93\u5165)", "Prompt Tokens"));
-    text("lbl-completion", w("Completion Tokens (\u8865\u5168)", "Completion Tokens"));
-    text("lbl-cache", w("Cache Tokens (\u7F13\u5B58, \u53EF\u9009)", "Cache Tokens (Optional)"));
-    text("lbl-note", w("\u5907\u6CE8", "Note"));
-    text("manual-cancel", w("\u53D6\u6D88", "Cancel"));
-    text("manual-submit", w("\u786E\u8BA4\u5F55\u5165", "Submit"));
-    for (const b of view.querySelectorAll("[data-heat]")) {
-      b.textContent = b.dataset.heat === "day" ? w("\u6BCF\u5929", "Daily") : w("\u6BCF\u5468", "Weekly");
-    }
-    const periodLabels = {
-      day: w("\u5929", "Day"),
-      week: w("\u5468", "Week"),
-      month: w("\u6708", "Month"),
-      custom: w("\u81EA\u5B9A\u4E49", "Custom")
-    };
-    for (const b of view.querySelectorAll("[data-period]")) {
-      b.textContent = periodLabels[b.dataset.period || ""] || "";
-    }
-    $("overview-tab")?.setAttribute("aria-selected", String(state.tab === "overview"));
-    $("details-tab")?.setAttribute("aria-selected", String(state.tab === "details"));
-    const ovSec = $("overview");
-    const detSec = $("details");
-    if (ovSec) ovSec.hidden = state.tab !== "overview";
-    if (detSec) detSec.hidden = state.tab !== "details";
-    text(
-      "coverage",
-      w(
-        `\u5DF2\u8BB0\u5F55 ${full(value.requests)} \u6B21\u8BF7\u6C42${value.firstDate ? ` \xB7 \u59CB\u4E8E ${value.firstDate}` : ""}`,
-        `${full(value.requests)} requests recorded${value.firstDate ? ` \xB7 since ${value.firstDate}` : ""}`
-      )
-    );
-    text(
-      "timezone",
-      `${value.timeZone} \xB7 ${value.syncing || (value.retryingConversations ?? 0) > 0 ? w("\u6B63\u5728\u540C\u6B65\u5386\u53F2\u2026", "Syncing history\u2026") : w("\u672C\u5730\u7EDF\u8BA1", "Local usage")}`
-    );
-    const alerts = [];
-    if (value.unknownRequests) {
-      alerts.push(
-        w(
-          `${value.unknownRequests} \u6B21\u8BF7\u6C42\u65E5\u671F\u672A\u77E5\uFF0C\u5171 ${compactNum(value.unknownTokens)} Token`,
-          `${value.unknownRequests} undated requests \xB7 ${compactNum(value.unknownTokens)} tokens`
-        )
-      );
-    }
-    const confirmedMissing = value.confirmedMissingConversations ?? (value.syncing ? 0 : value.missingConversations ?? 0);
-    if (value.partialRequests || value.unreadableFiles || confirmedMissing > 0 && !value.syncing || value.persistenceError) {
-      alerts.push(w("\u90E8\u5206\u8BB0\u5F55\u6682\u4E0D\u53EF\u8BFB\u53D6\uFF0C\u7528\u91CF\u53EF\u80FD\u4E0D\u5B8C\u6574", "Some records are unavailable; usage may be incomplete"));
-    }
-    const alertBox = $("alert");
-    if (alertBox) alertBox.hidden = !alerts.length;
-    text("alert", alerts.join(" \xB7 "));
-  }
-
-  // src/ui/usage-modal/account-switcher.ts
-  async function syncAccountSwitcher(ctx) {
-    const select = ctx.$("account-switcher");
-    if (!select) return;
-    const { state, options, w } = ctx;
-    const bridge = resolveUsageBridge(options);
-    let list = null;
-    if (state.value?.accounts && Array.isArray(state.value.accounts)) {
-      list = state.value.accounts;
-    } else if (bridge?.getAccounts && state.lastAccQueryKey !== state.value?.accountKey) {
-      state.lastAccQueryKey = state.value?.accountKey || "";
-      try {
-        const res = await bridge.getAccounts();
-        list = Array.isArray(res) ? res : res?.accounts || [];
-      } catch {
-      }
-    } else if (!bridge?.getAccounts) {
-      list = [];
-    } else {
-      return;
-    }
-    if (!list || !list.length) list = [state.value?.viewScope || state.value?.accountKey || "default"];
-    const currentKey = state.value?.viewScope || "all";
-    select.hidden = list.length <= 1;
-    renderSubtitle(ctx);
-    const items = list.map((acc) => {
-      const id = typeof acc === "string" ? acc : acc.id || ("account" in acc ? acc.account : void 0) || ("accountKey" in acc ? acc.accountKey : void 0) || "default";
-      const isAll = id === "all";
-      const name = typeof acc === "string" ? acc.length > 12 ? `${acc.slice(0, 10)}\u2026` : acc : isAll ? w("\u5168\u90E8\u8D26\u53F7 (\u6C47\u603B)", "All Accounts (Aggregated)") : acc.email || acc.name || id;
-      return [id, name];
-    });
-    const optSig = `${options.language.language}|${currentKey}|${items.map(([id, name]) => `${id}:${name}`).join(",")}`;
-    if (select.dataset.sig === optSig) return;
-    select.dataset.sig = optSig;
-    select.replaceChildren(
-      ...items.map(([id, name]) => {
-        const opt = document.createElement("option");
-        opt.value = id;
-        opt.textContent = name;
-        opt.selected = id === currentKey;
-        return opt;
-      })
-    );
-  }
-  function bindAccountSwitcher(ctx) {
-    const select = ctx.$("account-switcher");
-    select?.addEventListener("change", async (event) => {
-      const newAccount = event.target.value;
-      if (!newAccount || newAccount === (ctx.state.value?.viewScope || ctx.state.value?.accountKey)) return;
-      const bridge = resolveUsageBridge(ctx.options);
-      try {
-        await bridge?.switchAccount?.({ account: newAccount });
-      } catch {
-      }
-      await ctx.options.onRefresh();
-    });
-  }
-
-  // src/ui/usage-modal/palette.ts
-  var MODEL_TOKEN_CASE = {
-    claude: "Claude",
-    opus: "Opus",
-    sonnet: "Sonnet",
-    haiku: "Haiku",
-    gemini: "Gemini",
-    flash: "Flash",
-    pro: "Pro",
-    argon: "Argon",
-    hydrogen: "Hydrogen",
-    carbon: "Carbon",
-    gpt: "GPT",
-    oss: "OSS"
-  };
-  var PAREN_SUFFIX_RE = /\s*\((?:xhigh|high|medium|low|thinking|tiered|trial|preview(?:\b[^)]*)?|exp(?:erimental)?(?:\b[^)]*)?|fast|lite|quality|\d{4}-\d{2}-\d{2})\)\s*$/i;
-  var BARE_SUFFIX_RE = /(?:[\s-]+(?:xhigh|high|medium|low|thinking|tiered|trial|preview(?:[\s-]+[a-z0-9]{1,10})*|exp(?:erimental)?(?:[\s-]+[a-z0-9]{1,10})*|latest|n|\d{4}-\d{2}-\d{2}|\d{8}))$/i;
-  var baseModelCache = /* @__PURE__ */ new Map();
-  function formatModelName(model) {
-    return model.replace(/-n$/, "").replace(/^gemini-/i, "Gemini ").replace(/^claude-/i, "Claude ").replace(/^gpt-/i, "GPT ").replace(/-/g, " ");
-  }
-  function baseModelName(rawModel) {
-    const raw = String(rawModel || "").trim();
-    if (!raw) return "";
-    const cached = baseModelCache.get(raw);
-    if (cached !== void 0) return cached;
-    let current = raw;
-    for (let i = 0; i < 8; i++) {
-      const next = current.replace(PAREN_SUFFIX_RE, "").replace(BARE_SUFFIX_RE, "").trim();
-      if (next === current || !next) break;
-      current = next;
-    }
-    current = current.replace(/(?<![\d.])(\d)-(\d)(?![\d.])/g, "$1.$2");
-    current = current.replace(/-(?![^(]*\))/g, " ").replace(/\s+/g, " ").trim();
-    current = current.split(" ").map((tok) => MODEL_TOKEN_CASE[tok.toLowerCase()] || (/^\d+b$/i.test(tok) ? tok.toUpperCase() : tok)).join(" ");
-    const out = current || raw;
-    if (baseModelCache.size > 2e3) baseModelCache.clear();
-    baseModelCache.set(raw, out);
-    return out;
-  }
-  function effectiveModelKey(rawModel, modelViewMode) {
-    return modelViewMode === "simple" ? baseModelName(rawModel) : rawModel;
-  }
-  function modelLabel(key, modelViewMode) {
-    return modelViewMode === "simple" ? key : formatModelName(key);
-  }
-  function variantLabel(rawModel, groupKey) {
-    const formatted = formatModelName(rawModel);
-    return formatted.toLowerCase() === groupKey.toLowerCase() && formatted !== rawModel ? `${formatted} (${rawModel})` : formatted;
-  }
-  var UsagePalette = class {
-    targetEl;
-    paletteKey = "";
-    modelColors = /* @__PURE__ */ new Map();
-    groupColors = /* @__PURE__ */ new Map();
-    userColors = /* @__PURE__ */ new Map();
-    colorContext;
-    constructor(targetEl) {
-      this.targetEl = targetEl;
-      const canvas = document.createElement("canvas");
-      canvas.width = 1;
-      canvas.height = 1;
-      this.colorContext = canvas.getContext("2d", { willReadFrequently: true });
-    }
-    themeSignature(host) {
-      const style = getComputedStyle(host || this.targetEl());
-      return [
-        style.getPropertyValue("--pulse-accent"),
-        style.getPropertyValue("--pulse-background"),
-        host?.dataset.pulseTheme
-      ].join("|");
-    }
-    resolveRgb(cssColor) {
-      if (!this.colorContext) return [133, 168, 255];
-      this.colorContext.clearRect(0, 0, 1, 1);
-      this.colorContext.fillStyle = "#000";
-      this.colorContext.fillStyle = cssColor;
-      this.colorContext.fillRect(0, 0, 1, 1);
-      const data = this.colorContext.getImageData(0, 0, 1, 1).data;
-      return [data[0], data[1], data[2]];
-    }
-    sync(value, modelViewMode, host) {
-      const rawSet = new Set(value?.models || []);
-      for (const day of value?.days || []) {
-        for (const model of Object.keys(day?.models || {})) rawSet.add(model);
-      }
-      const models = [...rawSet].sort();
-      const groupModels = [...new Set(models.map(baseModelName))].sort();
-      const users = [...value?.users || []].sort();
-      const key = [
-        this.themeSignature(host),
-        modelViewMode,
-        models.join("|"),
-        groupModels.join("|"),
-        users.join("|")
-      ].join("|");
-      if (key === this.paletteKey) return;
-      this.paletteKey = key;
-      this.modelColors.clear();
-      this.groupColors.clear();
-      this.userColors.clear();
-      const style = getComputedStyle(host || this.targetEl());
-      const base = this.resolveRgb(style.getPropertyValue("--pulse-accent").trim() || "#85a8ff");
-      const background = this.resolveRgb(style.getPropertyValue("--pulse-background").trim() || "#1c1d1f");
-      const [hue, rawSat] = rgbToHsl(base);
-      const dark = luminance(background) < 0.35;
-      const offsets = [0, -18, 18, -36, 36, -9, 9, -27, 27];
-      const tones = dark ? [0.64, 0.52, 0.73, 0.59, 0.68] : [0.43, 0.33, 0.51, 0.38, 0.47];
-      const towardLight = contrastRatio([255, 255, 255], background) > contrastRatio([0, 0, 0], background);
-      const sat = rawSat < 0.08 ? 0.07 : Math.max(0.28, Math.min(0.55, rawSat * 0.72));
-      models.forEach((model, i) => {
-        this.modelColors.set(
-          model,
-          buildAccentColor((hue + offsets[i % offsets.length] + 360) % 360, sat, tones[i % tones.length], background, towardLight)
-        );
-      });
-      groupModels.forEach((group, i) => {
-        this.groupColors.set(
-          group,
-          buildAccentColor((hue + offsets[i % offsets.length] + 360) % 360, sat, tones[i % tones.length], background, towardLight)
-        );
-      });
-      users.filter((u) => u !== "legacy").forEach((u, i) => {
-        this.userColors.set(
-          u,
-          buildAccentColor((hue + offsets[i % offsets.length] + 180) % 360, sat, tones[i % tones.length], background, towardLight)
-        );
-      });
-      this.userColors.set("legacy", "var(--pulse-muted)");
-    }
-    modelColor(model, modelViewMode) {
-      return (modelViewMode === "simple" ? this.groupColors.get(model) || this.modelColors.get(model) : this.modelColors.get(model) || this.groupColors.get(model)) || "var(--pulse-accent)";
-    }
-    userColor(userKey) {
-      return this.userColors.get(userKey) || (userKey === "legacy" ? "var(--pulse-muted)" : "var(--pulse-accent)");
-    }
-    projectColor(projectKey) {
-      if (projectKey === "conversations") return "#6d7b93";
-      if (projectKey === "cli") return "#4ea8de";
-      if (projectKey.startsWith("remote:")) return "#945fb9";
-      const colors = ["#5b8ff9", "#5ad8a6", "#f6bd16", "#e86452", "#6dc8ec", "#ff9845", "#1e9493", "#7f8ff4"];
-      let h = 2166136261;
-      for (let i = 0; i < projectKey.length; i++) {
-        h ^= projectKey.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-      }
-      return colors[(h >>> 0) % colors.length];
-    }
-    userDisplayName(userKey, value, w) {
-      if (userKey === "legacy") return w("\u65E9\u671F\u5386\u53F2\u672A\u533A\u5206\u7528\u91CF", "Legacy unassigned");
-      return value?.userMeta?.[userKey]?.email || value?.userMeta?.[userKey]?.name || userKey;
-    }
-  };
-
-  // src/ui/usage-modal/aggregator.ts
-  function addDays(date, days) {
-    const d = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
-  }
-  function startOfWeek(date) {
-    const d = /* @__PURE__ */ new Date(`${date}T00:00:00Z`);
-    return addDays(date, -((d.getUTCDay() + 6) % 7));
-  }
-  function shiftMonth(date, shift) {
-    const d = /* @__PURE__ */ new Date(`${date.slice(0, 7)}-01T00:00:00Z`);
-    d.setUTCMonth(d.getUTCMonth() + shift);
-    return d.toISOString().slice(0, 10);
-  }
-  var COUNT_KEYS = [
-    "total",
-    "requests",
-    "uncached",
-    "cacheRead",
-    "cacheWrite",
-    "output"
-  ];
-  function createEmptyBucket() {
-    return { total: 0, requests: 0, uncached: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
-  }
-  var UsageDayIndex = class {
-    dayMap = /* @__PURE__ */ new Map();
-    sortedDays = [];
-    projectDayMap = /* @__PURE__ */ new Map();
-    sortedProjectDays = [];
-    rebuild(value) {
-      this.dayMap.clear();
-      const list = [];
-      for (const day of value?.days || []) {
-        if (day?.date) {
-          this.dayMap.set(day.date, day);
-          list.push(day);
-        }
-      }
-      list.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-      this.sortedDays = list;
-    }
-    rebuildProjects(overview) {
-      this.projectDayMap.clear();
-      const list = [];
-      for (const day of overview?.days || []) {
-        if (day?.date) {
-          this.projectDayMap.set(day.date, day);
-          list.push(day);
-        }
-      }
-      list.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-      this.sortedProjectDays = list;
-    }
-    totals(from, to, query, filter = false) {
-      const models = {};
-      const modelVariants = {};
-      const users = {};
-      const projects = {};
-      let legacyTokens = 0;
-      let total = 0;
-      let requests = 0;
-      if (query.dimension === "project") {
-        const accumProj = (day) => {
-          if (!day) return;
-          for (const [pKey, r] of Object.entries(day.projects || {})) {
-            if (filter && query.disabledProjects?.has(pKey)) continue;
-            const b = projects[pKey] ??= createEmptyBucket();
-            for (const k of COUNT_KEYS) b[k] += r[k] || 0;
-            total += r.total || 0;
-            requests += r.requests || 0;
-          }
-        };
-        if (from === to) {
-          accumProj(this.projectDayMap.get(from));
-        } else if (from <= to && this.sortedProjectDays.length) {
-          let lo = 0;
-          let hi = this.sortedProjectDays.length;
-          while (lo < hi) {
-            const mid = lo + hi >> 1;
-            if (this.sortedProjectDays[mid].date < from) lo = mid + 1;
-            else hi = mid;
-          }
-          for (let i = lo; i < this.sortedProjectDays.length; i++) {
-            const day = this.sortedProjectDays[i];
-            if (day.date > to) break;
-            accumProj(day);
-          }
-        }
-        return { from, to, models, modelVariants, users, projects, legacyTokens, total, requests };
-      }
-      const accum = (day) => {
-        if (!day) return;
-        legacyTokens += day.legacyTokens || 0;
-        for (const [rawModel, r] of Object.entries(day.models || {})) {
-          const key = query.dimension === "model" ? effectiveModelKey(rawModel, query.modelViewMode) : rawModel;
-          if (filter && query.dimension === "model" && query.disabledModels.has(key)) continue;
-          const m = models[key] ??= createEmptyBucket();
-          for (const k of COUNT_KEYS) m[k] += r[k] || 0;
-          if (query.dimension === "model") {
-            const gv = modelVariants[key] ??= {};
-            const v = gv[rawModel] ??= createEmptyBucket();
-            for (const k of COUNT_KEYS) v[k] += r[k] || 0;
-          }
-          if (query.dimension === "model") {
-            total += r.total || 0;
-            requests += r.requests || 0;
-          }
-        }
-        for (const [u, r] of Object.entries(day.users || {})) {
-          if (filter && query.dimension === "user" && query.disabledUsers.has(u)) continue;
-          const usr = users[u] ??= {
-            name: r.name,
-            userKey: u,
-            isLegacy: r.isLegacy,
-            ...createEmptyBucket()
-          };
-          for (const k of COUNT_KEYS) usr[k] += r[k] || 0;
-          if (query.dimension === "user") {
-            total += r.total || 0;
-            requests += r.requests || 0;
-          }
-        }
-      };
-      if (from === to) {
-        accum(this.dayMap.get(from));
-      } else if (from <= to && this.sortedDays.length) {
-        let lo = 0;
-        let hi = this.sortedDays.length;
-        while (lo < hi) {
-          const mid = lo + hi >> 1;
-          if (this.sortedDays[mid].date < from) lo = mid + 1;
-          else hi = mid;
-        }
-        for (let i = lo; i < this.sortedDays.length; i++) {
-          const day = this.sortedDays[i];
-          if (day.date > to) break;
-          accum(day);
-        }
-      }
-      return { from, to, models, modelVariants, users, legacyTokens, total, requests };
-    }
-    aggregateHourlyRange(start, end) {
-      const hours = Array(24).fill(0);
-      if (start <= end && this.sortedDays.length) {
-        let lo = 0;
-        let hi = this.sortedDays.length;
-        while (lo < hi) {
-          const mid = lo + hi >> 1;
-          if (this.sortedDays[mid].date < start) lo = mid + 1;
-          else hi = mid;
-        }
-        for (let i = lo; i < this.sortedDays.length; i++) {
-          const day = this.sortedDays[i];
-          if (day.date > end) break;
-          if (Array.isArray(day.hours)) {
-            for (let h = 0; h < 24; h++) hours[h] += day.hours[h] || 0;
-          }
-        }
-      }
-      return hours;
-    }
-    buildPeriodBuckets(period, anchor, customStart, customEnd, query) {
-      const buckets = [];
-      let rangeLabel = "";
-      if (period === "day") {
-        const start = shiftMonth(anchor, 0);
-        const end = addDays(shiftMonth(anchor, 1), -1);
-        for (let date = start; date <= end; date = addDays(date, 1)) {
-          buckets.push(this.totals(date, date, query, true));
-        }
-        rangeLabel = start.slice(0, 7);
-      } else if (period === "week") {
-        const start = addDays(startOfWeek(anchor), -11 * 7);
-        for (let i = 0; i < 12; i++) {
-          const from = addDays(start, i * 7);
-          buckets.push(this.totals(from, addDays(from, 6), query, true));
-        }
-        rangeLabel = `${start.slice(5)} \u2013 ${addDays(startOfWeek(anchor), 6).slice(5)}`;
-      } else if (period === "month") {
-        for (let i = -11; i <= 0; i++) {
-          const from = shiftMonth(anchor, i);
-          buckets.push(this.totals(from, addDays(shiftMonth(from, 1), -1), query, true));
-        }
-        rangeLabel = `${buckets[0].from.slice(0, 7)} \u2013 ${shiftMonth(anchor, 0).slice(0, 7)}`;
-      } else {
-        for (let date = customStart; date <= customEnd; date = addDays(date, 1)) {
-          buckets.push(this.totals(date, date, query, true));
-        }
-        rangeLabel = `${customStart} \u2013 ${customEnd}`;
-      }
-      return { buckets, rangeLabel };
-    }
-  };
-
-  // src/ui/usage-modal/hourly-spline.ts
-  var SVG_NS2 = "http://www.w3.org/2000/svg";
-  function fmt1(v) {
-    if (!Number.isFinite(v)) return "0.0";
-    const sign = v < 0 ? -1 : 1;
-    const scaled = Math.round(Math.abs(v) * 10);
-    const rounded = scaled === 0 ? 0 : sign * scaled / 10;
-    return rounded.toFixed(1);
-  }
-  function isBaselinePoint(p, baselineY) {
-    if (typeof p.val === "number" && Number.isFinite(p.val)) {
-      return p.val === 0;
-    }
-    return Math.abs(p.y - baselineY) <= 1e-9 || p.y >= baselineY;
-  }
-  function compileCatmullRomSvgPathFallback(points, baselineY, tension = 0.5, minY) {
-    if (!Number.isFinite(baselineY) || !Array.isArray(points) || points.length === 0) {
-      return { pathD: "", areaD: "" };
-    }
-    const pts = points.filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
-    if (pts.length === 0) {
-      return { pathD: "", areaD: "" };
-    }
-    const safeTension = Number.isFinite(tension) ? tension : 0.5;
-    let resolvedMinY = typeof minY === "number" && Number.isFinite(minY) ? minY : baselineY;
-    if (typeof minY !== "number" || !Number.isFinite(minY)) {
-      for (const p of pts) {
-        if (p.y < resolvedMinY) resolvedMinY = p.y;
-      }
-    }
-    const lo = Math.min(resolvedMinY, baselineY);
-    const hi = Math.max(resolvedMinY, baselineY);
-    let pathD = `M ${fmt1(pts[0].x)},${fmt1(pts[0].y)}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[Math.max(0, i - 1)];
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p3 = pts[Math.min(pts.length - 1, i + 2)];
-      const cp1x = p1.x + (p2.x - p0.x) * safeTension / 3;
-      const cp2x = p2.x - (p3.x - p1.x) * safeTension / 3;
-      let cp1y = p1.y + (p2.y - p0.y) * safeTension / 3;
-      let cp2y = p2.y - (p3.y - p1.y) * safeTension / 3;
-      const p1Zero = isBaselinePoint(p1, baselineY);
-      const p2Zero = isBaselinePoint(p2, baselineY);
-      if (p1Zero && p2Zero) {
-        cp1y = baselineY;
-        cp2y = baselineY;
-      } else {
-        if (p1Zero) cp1y = baselineY;
-        if (p2Zero) cp2y = baselineY;
-        cp1y = Math.min(hi, Math.max(lo, cp1y));
-        cp2y = Math.min(hi, Math.max(lo, cp2y));
-      }
-      pathD += ` C ${fmt1(cp1x)},${fmt1(cp1y)} ${fmt1(cp2x)},${fmt1(cp2y)} ${fmt1(p2.x)},${fmt1(p2.y)}`;
-    }
-    const baseS = fmt1(baselineY);
-    const areaD = `${pathD} L ${fmt1(pts[pts.length - 1].x)},${baseS} L ${fmt1(pts[0].x)},${baseS} Z`;
-    return { pathD, areaD };
-  }
-  function svgEl(tag, attrs = {}, txt) {
-    const n = document.createElementNS(SVG_NS2, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
-    if (txt !== void 0) n.textContent = txt;
-    return n;
-  }
-  function renderHourlySpline(ctx, dayIndex, tooltip) {
-    const { $, text, state, w, compactNum } = ctx;
-    const section = $("hourly-section");
-    if (!section || !state.value) return;
-    text("hourly-toggle-title", w("\u5C0F\u65F6\u7528\u91CF\u8D8B\u52BF", "Hourly trend"));
-    text("hourly-mode-combined", w("\u65F6\u6BB5\u5408\u96C6", "Period total"));
-    text("hourly-mode-today", w("\u4ECA\u65E5", "Today"));
-    $("hourly-mode-combined")?.setAttribute("aria-pressed", String(state.hourlyMode === "combined"));
-    $("hourly-mode-today")?.setAttribute("aria-pressed", String(state.hourlyMode === "today"));
-    $("hourly-toggle")?.setAttribute("aria-expanded", String(state.hourlyExpanded));
-    const content = $("hourly-content");
-    if (content) content.hidden = !state.hourlyExpanded;
-    let hours = null;
-    if (state.hourlyMode === "today") {
-      hours = state.value.todayHours || dayIndex.dayMap.get(state.value.today)?.hours;
-      text("hourly-title", w("\u4ECA\u65E5 24 \u5C0F\u65F6\u7528\u91CF\u8D8B\u52BF", "Today's 24-Hour Trend"));
-    } else {
-      const isSingleDay2 = state.selectedBar && state.selectedBar.from === state.selectedBar.to;
-      if (isSingleDay2 && state.selectedBar) {
-        const targetDate = state.selectedBar.from;
-        const day = dayIndex.dayMap.get(targetDate);
-        hours = day?.hours || (targetDate === state.value.today ? state.value.todayHours : null);
-        text(
-          "hourly-title",
-          targetDate === state.value.today ? w("\u4ECA\u65E5 24 \u5C0F\u65F6\u7528\u91CF\u8D8B\u52BF", "Today's 24-Hour Trend") : w(`${targetDate} 24 \u5C0F\u65F6\u7528\u91CF\u8D8B\u52BF`, `${targetDate} 24-Hour Trend`)
-        );
-      } else {
-        const start = state.selectedBar ? state.selectedBar.from : state.currentBuckets[0]?.from || state.value.today;
-        const end = state.selectedBar ? state.selectedBar.to : state.currentBuckets.at(-1)?.to || state.value.today;
-        hours = dayIndex.aggregateHourlyRange(start, end);
-        text(
-          "hourly-title",
-          w("\u6240\u9009\u65F6\u6BB5 24 \u5C0F\u65F6\u805A\u5408\u5206\u5E03", "Period 24-Hour Distribution") + (state.currentBuckets.length ? ` (${start} \u2013 ${end})` : "")
-        );
-      }
-    }
-    if (!hours || !Array.isArray(hours) || hours.length < 24) hours = Array(24).fill(0);
-    const totalHourly = hours.reduce((n, c) => n + c, 0);
-    const isSingleDay = state.hourlyMode === "today" || Boolean(state.selectedBar && state.selectedBar.from === state.selectedBar.to);
-    text(
-      "hourly-subtitle",
-      !isSingleDay ? w(`${compactNum(totalHourly)} Token \xB7 24\u5C0F\u65F6\u5408\u96C6\u7528\u91CF`, `${compactNum(totalHourly)} tokens \xB7 24-hour aggregate`) : w(`${compactNum(totalHourly)} Token \xB7 \u6BCF\u5C0F\u65F6\u7528\u91CF`, `${compactNum(totalHourly)} tokens \xB7 hourly distribution`)
-    );
-    if (!state.hourlyExpanded) return;
-    const maxVal = Math.max(1, ...hours);
-    const padL = 40;
-    const padR = 15;
-    const padT = 15;
-    const padB = 25;
-    const wPlot = 560;
-    const hPlot = 90;
-    const width = padL + wPlot + padR;
-    const height = padT + hPlot + padB;
-    const baseY = padT + hPlot;
-    const pts = hours.map((v, i) => ({
-      x: padL + i / 23 * wPlot,
-      y: baseY - v / maxVal * hPlot,
-      val: v,
-      hour: i
-    }));
-    const { pathD, areaD } = compileCatmullRomSvgPathFallback(pts, baseY, 0.5, padT);
-    const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width: "100%", height, preserveAspectRatio: "none" });
-    svg.style.overflow = "visible";
-    const defs = svgEl("defs");
-    const grad = svgEl("linearGradient", { id: "hourly-area-grad", x1: "0", y1: "0", x2: "0", y2: "1" });
-    grad.append(
-      svgEl("stop", { offset: "0%", "stop-color": "var(--pulse-accent)", "stop-opacity": "0.35" }),
-      svgEl("stop", { offset: "100%", "stop-color": "var(--pulse-accent)", "stop-opacity": "0.01" })
-    );
-    defs.append(grad);
-    svg.append(defs);
-    for (const r of [0, 0.5, 1]) {
-      const gy = padT + hPlot * (1 - r);
-      svg.append(
-        svgEl("line", { x1: padL, y1: gy.toFixed(1), x2: padL + wPlot, y2: gy.toFixed(1), stroke: "var(--pulse-separator)", "stroke-width": "1" }),
-        svgEl("text", { x: padL - 6, y: (gy + 3).toFixed(1), "text-anchor": "end", fill: "var(--pulse-muted)", "font-size": "9" }, compactNum(maxVal * r))
-      );
-    }
-    svg.append(
-      svgEl("path", { d: areaD, fill: "url(#hourly-area-grad)", class: "hourly-area" }),
-      svgEl("path", { d: pathD, fill: "none", stroke: "var(--pulse-accent)", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", class: "hourly-line" })
-    );
-    const crosshair = svgEl("line", { class: "hourly-crosshair", x1: "0", y1: padT, x2: "0", y2: baseY, stroke: "var(--pulse-accent)", "stroke-opacity": "0.5", "stroke-width": "1", "stroke-dasharray": "2 2" });
-    crosshair.style.opacity = "0";
-    const focusRing = svgEl("circle", { class: "hourly-focus-ring", cx: "0", cy: "0", r: "5.5", fill: "none", stroke: "var(--pulse-accent)", "stroke-opacity": "0.65", "stroke-width": "1.5" });
-    focusRing.style.opacity = "0";
-    svg.append(crosshair);
-    const circles = pts.map((p) => {
-      const c = svgEl("circle", { class: "hourly-pt", cx: p.x.toFixed(1), cy: p.y.toFixed(1), r: p.val > 0 ? "2.5" : "1.5", fill: "var(--pulse-accent)", "fill-opacity": p.val > 0 ? "1" : "0.4" });
-      svg.append(c);
-      return c;
-    });
-    svg.append(focusRing);
-    for (const h of [0, 4, 8, 12, 16, 20, 23]) {
-      svg.append(svgEl("text", { x: pts[h].x.toFixed(1), y: height - 6, "text-anchor": "middle", fill: "var(--pulse-muted)", "font-size": "9" }, `${String(h).padStart(2, "0")}:00`));
-    }
-    for (const p of pts) {
-      const bucket = {
-        from: `${String(p.hour).padStart(2, "0")}:00`,
-        to: `${String(p.hour).padStart(2, "0")}:59`,
-        total: p.val,
-        requests: 0,
-        models: {},
-        modelVariants: {},
-        users: {},
-        legacyTokens: 0
-      };
-      const bar = svgEl("rect", { x: (p.x - wPlot / 46).toFixed(1), y: padT, width: (wPlot / 23).toFixed(1), height: hPlot, fill: "transparent", class: "hourly-hover", "data-h": p.hour, "data-v": p.val });
-      bar.style.cursor = "pointer";
-      const circle = circles[p.hour];
-      bar.addEventListener("pointerenter", () => {
-        crosshair.setAttribute("x1", p.x.toFixed(1));
-        crosshair.setAttribute("x2", p.x.toFixed(1));
-        crosshair.style.opacity = "1";
-        focusRing.setAttribute("cx", p.x.toFixed(1));
-        focusRing.setAttribute("cy", p.y.toFixed(1));
-        focusRing.style.opacity = "1";
-        circle.setAttribute("r", "4");
-        circle.setAttribute("fill-opacity", "1");
-        tooltip.show(bucket, bar);
-      });
-      bar.addEventListener("pointerleave", () => {
-        crosshair.style.opacity = "0";
-        focusRing.style.opacity = "0";
-        circle.setAttribute("r", p.val > 0 ? "2.5" : "1.5");
-        circle.setAttribute("fill-opacity", p.val > 0 ? "1" : "0.4");
-        tooltip.hide();
-      });
-      svg.append(bar);
-    }
-    $("hourly-chart")?.replaceChildren(svg);
-  }
-
-  // src/ui/usage-modal/picker.ts
-  var CHECK_SVG = '<span></span><span class="picker-hint"></span><svg class="picker-check" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>';
-  function createPopoverListbox(opts) {
-    const { trigger, menu, labelEl, dialog, view, setMarkup: setMarkup2, getSelected, onSelect } = opts;
-    let currentOptions = [];
-    const isOpen = () => menu.matches(":popover-open");
-    const position = () => {
-      if (!isOpen()) return;
-      const r = trigger.getBoundingClientRect();
-      const bounds = dialog.getBoundingClientRect();
-      const width = menu.offsetWidth || 160;
-      const height = menu.offsetHeight || 120;
-      menu.style.left = `${Math.max(bounds.left + 12, Math.min(r.left, bounds.right - width - 12))}px`;
-      const below = r.bottom + 6;
-      menu.style.top = `${below + height <= bounds.bottom - 12 ? below : Math.max(bounds.top + 12, r.top - height - 6)}px`;
-    };
-    const close = (restore = true) => {
-      if (!isOpen()) return;
-      menu.hidePopover();
-      trigger.setAttribute("aria-expanded", "false");
-      if (restore) trigger.focus({ preventScroll: true });
-    };
-    const sync = () => {
-      const selected = getSelected();
-      const matched = currentOptions.find((o) => o.value === selected);
-      const labelText = matched?.label ?? opts.placeholder?.() ?? selected;
-      if (labelEl.textContent !== labelText) labelEl.textContent = labelText;
-      for (const child of menu.children) {
-        const btn = child;
-        btn.setAttribute("aria-selected", String(btn.dataset.value === selected));
-      }
-    };
-    const open = () => {
-      menu.showPopover();
-      trigger.setAttribute("aria-expanded", "true");
-      position();
-      (menu.querySelector("[aria-selected=true]") || menu.firstElementChild)?.focus({
-        preventScroll: true
-      });
-    };
-    const setOptions = (options, menuLabel) => {
-      currentOptions = [...options];
-      if (menuLabel) menu.setAttribute("aria-label", menuLabel);
-      const sig = currentOptions.map((o) => `${o.value}	${o.label}	${o.hint || ""}`).join("\n");
-      if (menu.dataset.sig !== sig) {
-        menu.dataset.sig = sig;
-        menu.replaceChildren(
-          ...currentOptions.map((item) => {
-            const btn = createDomNode("button", "picker-option");
-            btn.type = "button";
-            btn.dataset.value = item.value;
-            btn.setAttribute("role", "option");
-            btn.tabIndex = -1;
-            setMarkup2(btn, CHECK_SVG);
-            const spans = btn.querySelectorAll("span");
-            spans[0].textContent = item.label;
-            if (item.hint) spans[1].textContent = item.hint;
-            else spans[1].remove();
-            return btn;
-          })
-        );
-      }
-      sync();
-    };
-    const onTriggerClick = () => {
-      if (isOpen()) close(false);
-      else open();
-    };
-    const onTriggerKeyDown = (e) => {
-      if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) return;
-      e.preventDefault();
-      if (!isOpen()) open();
-    };
-    const onMenuClick = (e) => {
-      const opt = e.target?.closest(".picker-option");
-      if (!opt || opt.dataset.value == null) return;
-      const next = opt.dataset.value;
-      close();
-      if (next !== getSelected()) {
-        onSelect(next);
-      }
-    };
-    const onMenuKeyDown = (e) => {
-      const options = [...menu.querySelectorAll(".picker-option")];
-      const index = options.indexOf(view.activeElement);
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        close();
-        return;
-      }
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        options[(Math.max(index, 0) + (e.key === "ArrowDown" ? 1 : -1) + options.length) % options.length]?.focus({
-          preventScroll: true
-        });
-      } else if (e.key === "Home") {
-        e.preventDefault();
-        options[0]?.focus({ preventScroll: true });
-      } else if (e.key === "End") {
-        e.preventDefault();
-        options.at(-1)?.focus({ preventScroll: true });
-      }
-    };
-    const onDocPointerDown = (e) => {
-      if (!isOpen()) return;
-      const path = e.composedPath();
-      if (path.includes(menu) || path.includes(trigger)) return;
-      close(false);
-    };
-    trigger.addEventListener("click", onTriggerClick);
-    trigger.addEventListener("keydown", onTriggerKeyDown);
-    menu.addEventListener("click", onMenuClick);
-    menu.addEventListener("keydown", onMenuKeyDown);
-    document.addEventListener("pointerdown", onDocPointerDown, true);
-    return {
-      setOptions,
-      sync,
-      open,
-      close,
-      isOpen,
-      position,
-      dispose: () => {
-        close(false);
-        trigger.removeEventListener("click", onTriggerClick);
-        trigger.removeEventListener("keydown", onTriggerKeyDown);
-        menu.removeEventListener("click", onMenuClick);
-        menu.removeEventListener("keydown", onMenuKeyDown);
-        document.removeEventListener("pointerdown", onDocPointerDown, true);
-      }
-    };
-  }
-
-  // src/ui/usage-modal/events.ts
-  function bindUsageModalEvents(ctx, options, deps) {
-    const { $, view, page, dialog, state, text, zh, w } = ctx;
-    const { palette, dayIndex, tooltip, heatmap, chart, render } = deps;
-    const applyUsageFontScale = (scale) => {
-      const resolved = String(resolveFontScale(scale));
-      dialog.style.setProperty("--pulse-usage-font-scale", resolved);
-      page.style.setProperty("--pulse-usage-font-scale", resolved);
-    };
-    const initScale = options.initialPreferences && !("error" in options.initialPreferences) && "usageFontScale" in options.initialPreferences ? options.initialPreferences.usageFontScale : void 0;
-    applyUsageFontScale(initScale);
-    const fontTrigger = $("font-settings");
-    const fontPopover = fontTrigger ? createFontPopover({
-      trigger: fontTrigger,
-      mountRoot: view,
-      getLanguage: () => options.language.language,
-      initial: options.initialPreferences ?? null,
-      onChange: async (update, next) => {
-        applyUsageFontScale(next.usageFontScale);
-        const bridge = resolveUsageBridge(options);
-        try {
-          if (typeof bridge?.setPreferences === "function") {
-            const saved = await bridge.setPreferences(update);
-            if (saved && typeof saved === "object" && !("error" in saved)) {
-              fontPopover?.sync(saved);
-              applyUsageFontScale(saved.usageFontScale);
-              options.onPreferencesSaved?.(saved);
-            }
-          }
-        } catch {
-        }
-      }
-    }) : null;
-    let prefsLoaded = Boolean(options.initialPreferences && !("error" in options.initialPreferences));
-    const loadPreferencesIfNeeded = () => {
-      fontPopover?.localize();
-      if (prefsLoaded) return;
-      prefsLoaded = true;
-      const bridge = resolveUsageBridge(options);
-      if (typeof bridge?.getPreferences !== "function") return;
-      void bridge.getPreferences().then((prefs) => {
-        if (state.disposed || !prefs || typeof prefs !== "object" || "error" in prefs) return;
-        fontPopover?.sync(prefs);
-        applyUsageFontScale(prefs.usageFontScale);
-        options.onPreferencesSaved?.(prefs);
-      }).catch(() => {
-        prefsLoaded = false;
-      });
-    };
-    const dimTrigger = $("dim-trigger");
-    const dimMenu = $("dim-menu");
-    const dimLabel = $("dim-label");
-    const dimPicker = dimTrigger && dimMenu && dimLabel ? createPopoverListbox({
-      trigger: dimTrigger,
-      menu: dimMenu,
-      labelEl: dimLabel,
-      dialog,
-      view,
-      setMarkup: options.setMarkup,
-      getSelected: () => state.dimension,
-      onSelect: (val) => {
-        state.dimension = val || "model";
-        state.selectedBar = null;
-        chart.renderChart();
-      }
-    }) : null;
-    const mvTrigger = $("model-view-trigger");
-    const mvMenu = $("model-view-menu");
-    const mvLabel = $("model-view-label");
-    const modelViewPicker = mvTrigger && mvMenu && mvLabel ? createPopoverListbox({
-      trigger: mvTrigger,
-      menu: mvMenu,
-      labelEl: mvLabel,
-      dialog,
-      view,
-      setMarkup: options.setMarkup,
-      getSelected: () => state.modelViewMode,
-      onSelect: (val) => {
-        state.modelViewMode = val || "simple";
-        state.disabledModels.clear();
-        chart.renderChart();
-      }
-    }) : null;
-    const syncPickers = () => {
-      dimPicker?.setOptions(
-        [
-          { value: "model", label: w("\u6309\u6A21\u578B\u7EDF\u8BA1", "By Model") },
-          { value: "user", label: w("\u6309\u7528\u6237\u7EDF\u8BA1", "By User") },
-          { value: "project", label: w("\u9879\u76EE\u7EDF\u8BA1", "Project Stats") }
-        ],
-        w("\u7EDF\u8BA1\u7EF4\u5EA6", "Dimension")
-      );
-      modelViewPicker?.setOptions(
-        [
-          { value: "simple", label: w("\u7B80\u6613", "Simple") },
-          { value: "detailed", label: w("\u8BE6\u7EC6", "Detailed") }
-        ],
-        w("\u89C6\u56FE\u6A21\u5F0F", "View mode")
-      );
-      fontPopover?.localize();
-    };
-    const closeSubPopovers = () => {
-      let closed = false;
-      if (dimPicker?.isOpen()) {
-        dimPicker.close();
-        closed = true;
-      }
-      if (modelViewPicker?.isOpen()) {
-        modelViewPicker.close();
-        closed = true;
-      }
-      if (fontPopover?.element.matches(":popover-open")) {
-        fontPopover.close();
-        closed = true;
-      }
-      return closed;
-    };
-    const dismissGuide = () => {
-      if (state.disposed) return;
-      const focused = view.activeElement === $("usage-intro-done");
-      state.guideDismissed = true;
-      renderOnboardingGuide(ctx, palette);
-      if (focused && dialog.open) $("overview-tab")?.focus({ preventScroll: true });
-    };
-    $("usage-intro-done")?.addEventListener("click", async () => {
-      if (state.guideSaving || state.disposed) return;
-      state.guideSaving = true;
-      state.guideError = false;
-      renderOnboardingGuide(ctx, palette);
-      try {
-        await options.onDismissGuide();
-        dismissGuide();
-      } catch {
-        if (!state.disposed) state.guideError = true;
-      } finally {
-        state.guideSaving = false;
-        if (!state.disposed) renderOnboardingGuide(ctx, palette);
-      }
-    });
-    const changeTab = (next) => {
-      heatmap.closeYear(false);
-      state.tab = next;
-      state.selectedBar = null;
-      tooltip.hide();
-      render();
-    };
-    $("overview-tab")?.addEventListener("click", () => changeTab("overview"));
-    $("details-tab")?.addEventListener("click", () => changeTab("details"));
-    for (const b of view.querySelectorAll("[data-heat]")) {
-      b.addEventListener("click", () => {
-        state.heatMode = b.dataset.heat || "day";
-        heatmap.renderHeat();
-      });
-    }
-    for (const b of view.querySelectorAll("[data-period]")) {
-      b.addEventListener("click", () => {
-        state.period = b.dataset.period || "day";
-        state.selectedBar = null;
-        chart.renderChart();
-      });
-    }
-    const handleCustomChange = () => {
-      const s = $("custom-start")?.value || "";
-      const e = $("custom-end")?.value || "";
-      if (s && e && s <= e) {
-        state.customStart = s;
-        state.customEnd = e;
-        state.selectedBar = null;
-        chart.renderChart();
-      }
-    };
-    $("custom-start")?.addEventListener("change", handleCustomChange);
-    $("custom-end")?.addEventListener("change", handleCustomChange);
-    $("hourly-mode-combined")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.hourlyMode = "combined";
-      state.hourlyExpanded = true;
-      renderHourlySpline(ctx, dayIndex, tooltip);
-    });
-    $("hourly-mode-today")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.hourlyMode = "today";
-      state.hourlyExpanded = true;
-      renderHourlySpline(ctx, dayIndex, tooltip);
-    });
-    $("hourly-toggle")?.addEventListener("click", () => {
-      state.hourlyExpanded = !state.hourlyExpanded;
-      renderHourlySpline(ctx, dayIndex, tooltip);
-    });
-    $("selection-details")?.addEventListener("click", () => {
-      if (!state.value) return;
-      state.anchor = state.selected?.from || state.value.today;
-      state.period = state.heatMode;
-      changeTab("details");
-    });
-    for (const [id, step] of [["previous", -1], ["next", 1]]) {
-      $(id)?.addEventListener("click", () => {
-        if (!state.anchor) return;
-        state.selectedBar = null;
-        state.anchor = state.period === "day" ? shiftMonth(state.anchor, step) : state.period === "week" ? addDays(state.anchor, step * 84) : shiftMonth(state.anchor, step * 12);
-        chart.renderChart();
-      });
-    }
-    $("locale")?.addEventListener("click", () => void options.onLanguage(zh() ? "en" : "zh-CN"));
-    let refreshMotion = null;
-    let refreshDelay = null;
-    let finishRefresh = null;
-    $("refresh")?.addEventListener("click", async () => {
-      if (state.busy || state.disposed) return;
-      const button = $("refresh");
-      if (!button) return;
-      state.busy = true;
-      const turn = 600;
-      const started = performance.now();
-      button.disabled = true;
-      button.setAttribute("aria-busy", "true");
-      refreshMotion = button.querySelector("svg")?.animate(
-        [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
-        { duration: turn, iterations: Infinity }
-      ) ?? null;
-      try {
-        state.projectOverviewKey = "";
-        state.projectDetailKey = "";
-        await options.onRefresh();
-      } catch {
-        if (!state.disposed) {
-          text("alert", w("\u6682\u65F6\u65E0\u6CD5\u5237\u65B0\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5", "Refresh unavailable. Try again shortly."));
-          const alertEl = $("alert");
-          if (alertEl) alertEl.hidden = false;
-        }
-      } finally {
-        if (!state.disposed) {
-          const elapsed2 = performance.now() - started;
-          const remaining = Math.max(turn, Math.ceil(elapsed2 / turn) * turn) - elapsed2;
-          await new Promise((resolve) => {
-            finishRefresh = resolve;
-            refreshDelay = setTimeout(resolve, Math.max(0, remaining));
-          });
-        }
-        if (refreshDelay) clearTimeout(refreshDelay);
-        refreshDelay = null;
-        finishRefresh = null;
-        refreshMotion?.cancel();
-        refreshMotion = null;
-        state.busy = false;
-        if (!state.disposed) {
-          button.disabled = false;
-          button.setAttribute("aria-busy", "false");
-        }
-      }
-    });
-    return {
-      dismissGuide,
-      syncPickers,
-      syncPreferences: (prefs) => {
-        if (!prefs || "error" in prefs) return;
-        prefsLoaded = true;
-        fontPopover?.sync(prefs);
-        if ("usageFontScale" in prefs) applyUsageFontScale(prefs.usageFontScale);
-      },
-      closeSubPopovers,
-      loadPreferencesIfNeeded,
-      dispose() {
-        if (refreshDelay) clearTimeout(refreshDelay);
-        finishRefresh?.();
-        refreshMotion?.cancel();
-        dimPicker?.dispose();
-        modelViewPicker?.dispose();
-        fontPopover?.dispose();
-      }
-    };
-  }
-
-  // src/ui/usage-modal/focus-trap.ts
-  function createFocusTrap(ctx, handlers) {
-    const { dialog, view, state, $ } = ctx;
-    const isFullpage = ctx.options.displayMode === "fullpage";
-    const within = (event) => event.composedPath().includes(dialog);
-    const present = () => {
-      if (isFullpage) {
-        if (!dialog.hasAttribute("open")) dialog.setAttribute("open", "");
-        return;
-      }
-      if (dialog.matches(":popover-open")) return;
-      dialog.removeAttribute("open");
-      dialog.showPopover();
-      dialog.setAttribute("open", "");
-      $("locale")?.focus({ preventScroll: true });
-    };
-    const conceal = () => {
-      if (!isFullpage && dialog.matches(":popover-open")) dialog.hidePopover();
-      dialog.removeAttribute("open");
-    };
-    const close = () => {
-      handlers.onCloseYear(false);
-      handlers.onCloseSubPopovers?.();
-      const tip = $("tip");
-      if (tip) {
-        try {
-          if (typeof tip.hidePopover === "function" && tip.matches(":popover-open")) tip.hidePopover();
-        } catch {
-        }
-        tip.hidden = true;
-      }
-      if (isFullpage) return;
-      conceal();
-      state.opener?.focus({ preventScroll: true });
-    };
-    const containFocus = (event) => {
-      if (!state.disposed && dialog.open && !within(event)) {
-        $("locale")?.focus({ preventScroll: true });
-      }
-    };
-    const containKeys = (event) => {
-      if (state.disposed || !dialog.open) return;
-      if (event.key === "Escape") {
-        const manualModal = $("manual-modal");
-        if (manualModal && !manualModal.hidden) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          handlers.onCloseManualModal();
-        } else if (handlers.onIsYearOpen()) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          handlers.onCloseYear();
-        } else if (handlers.onCloseSubPopovers?.()) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        } else if (!isFullpage) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          close();
-        }
-        return;
-      }
-      if (isFullpage || event.key !== "Tab") return;
-      if (handlers.onIsYearOpen()) handlers.onCloseYear(false);
-      const controls = [...view.querySelectorAll("button,input,select,a[href],[tabindex]")].filter(
-        (n) => n.tabIndex >= 0 && !n.disabled && n.getClientRects().length && getComputedStyle(n).visibility !== "hidden"
-      );
-      if (!controls.length) {
-        event.preventDefault();
-        return;
-      }
-      const index = controls.indexOf(view.activeElement);
-      if (index < 0 || event.shiftKey && index === 0 || !event.shiftKey && index === controls.length - 1) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        (event.shiftKey ? controls.at(-1) : controls[0])?.focus({ preventScroll: true });
-      }
-    };
-    const containScroll = (event) => {
-      if (!state.disposed && dialog.open && !within(event)) event.preventDefault();
-    };
-    const containPointer = (event) => {
-      if (state.disposed || !dialog.open) return;
-      const r = dialog.getBoundingClientRect();
-      const backdropHit = event.composedPath()[0] === dialog;
-      if (!within(event) || backdropHit && (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (event.type === "click") close();
-      }
-    };
-    if (!isFullpage) {
-      $("close")?.addEventListener("click", close);
-      dialog.addEventListener("cancel", (event) => {
-        event.preventDefault();
-        close();
-      });
-      dialog.addEventListener("click", (event) => {
-        if (event.target === dialog) {
-          const r = dialog.getBoundingClientRect();
-          if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) {
-            close();
-          }
-        }
-      });
-      document.addEventListener("focusin", containFocus, true);
-      document.addEventListener("wheel", containScroll, { capture: true, passive: false });
-      document.addEventListener("touchmove", containScroll, { capture: true, passive: false });
-      for (const type of ["pointerdown", "mousedown", "click"]) {
-        document.addEventListener(type, containPointer, true);
-      }
-    }
-    document.addEventListener("keydown", containKeys, true);
-    return {
-      present,
-      conceal,
-      close,
-      dispose() {
-        document.removeEventListener("keydown", containKeys, true);
-        if (!isFullpage) {
-          document.removeEventListener("focusin", containFocus, true);
-          document.removeEventListener("wheel", containScroll, true);
-          document.removeEventListener("touchmove", containScroll, true);
-          for (const type of ["pointerdown", "mousedown", "click"]) {
-            document.removeEventListener(type, containPointer, true);
-          }
-        }
-        conceal();
-      }
-    };
-  }
-
-  // src/ui/usage-modal/heatmap.ts
-  var EN_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  var ZH_WEEKDAYS = ["\u4E00", "", "\u4E09", "", "\u4E94", "", "\u65E5"];
-  var EN_WEEKDAYS = ["M", "", "W", "", "F", "", "S"];
-  function createHeatmapController(ctx, dayIndex, tooltip, getQuery) {
-    const { $, text, w, zh, full, state, view, page, dialog, options } = ctx;
-    const showSelection = () => {
-      if (!state.value) return;
-      const bucket = state.selected || dayIndex.totals(state.value.today, state.value.today, getQuery());
-      text("selection-title", bucket.from === bucket.to ? bucket.from : `${bucket.from} \u2013 ${bucket.to}`);
-      text("selection-value", `${full(bucket.total)} Token \xB7 ${w(`${bucket.requests} \u6B21\u8BF7\u6C42`, `${bucket.requests} requests`)}`);
-    };
-    const syncYear = () => {
-      text("year-label", String(state.year));
-      $("year")?.setAttribute("aria-label", `${w("\u9009\u62E9\u5E74\u4EFD", "Select year")} \xB7 ${state.year}`);
-      $("year-menu")?.setAttribute("aria-label", w("\u5E74\u4EFD", "Year"));
-      for (const option of $("year-menu")?.children || []) {
-        const el2 = option;
-        option.setAttribute("aria-selected", String(el2.dataset.year === String(state.year)));
-      }
-    };
-    const closeYear = (restore = true) => {
-      const menu = $("year-menu");
-      if (!menu || !menu.matches(":popover-open")) return;
-      menu.hidePopover();
-      $("year")?.setAttribute("aria-expanded", "false");
-      if (restore) $("year")?.focus({ preventScroll: true });
-    };
-    const positionYear = () => {
-      const menu = $("year-menu");
-      const yearBtn = $("year");
-      if (!menu || !yearBtn || !menu.matches(":popover-open")) return;
-      const r = yearBtn.getBoundingClientRect();
-      const bounds = dialog.getBoundingClientRect();
-      const width = menu.offsetWidth;
-      const height = menu.offsetHeight;
-      menu.style.left = `${Math.max(bounds.left + 12, Math.min(r.right - width, bounds.right - width - 12))}px`;
-      const below = r.bottom + 7;
-      menu.style.top = `${below + height <= bounds.bottom - 12 ? below : Math.max(bounds.top + 12, r.top - height - 7)}px`;
-    };
-    const openYear = () => {
-      const menu = $("year-menu");
-      if (!menu) return;
-      tooltip.hide();
-      menu.showPopover();
-      $("year")?.setAttribute("aria-expanded", "true");
-      positionYear();
-      (menu.querySelector("[aria-selected=true]") || menu.firstElementChild)?.focus({ preventScroll: true });
-    };
-    const renderHeat = () => {
-      if (!state.value || !state.year) return;
-      const years = [];
-      const first = Number(state.value.firstDate?.slice(0, 4) || state.value.today.slice(0, 4));
-      const currentYear = Number(state.value.today.slice(0, 4));
-      const minimum = Math.max(first, currentYear - 10);
-      for (let y = currentYear; y >= minimum; y--) years.push(y);
-      const yearBtn = $("year");
-      const yearMenu = $("year-menu");
-      if (yearBtn && yearMenu && yearBtn.dataset.years !== years.join(",")) {
-        yearMenu.replaceChildren(
-          ...years.map((y) => {
-            const option = createDomNode("button", "year-option");
-            option.type = "button";
-            option.dataset.year = String(y);
-            option.setAttribute("role", "option");
-            option.tabIndex = -1;
-            options.setMarkup(option, '<span></span><svg class="year-check" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>');
-            if (option.firstElementChild) option.firstElementChild.textContent = String(y);
-            option.addEventListener("click", () => {
-              state.year = String(y);
-              syncYear();
-              closeYear();
-              renderHeat();
-            });
-            return option;
-          })
-        );
-        yearBtn.dataset.years = years.join(",");
-      }
-      syncYear();
-      const start = startOfWeek(`${state.year}-01-01`);
-      const end = `${state.year}-12-31`;
-      const weeks = Math.floor((Date.parse(end) - Date.parse(start)) / 6048e5) + 1;
-      const heatEl = $("heat");
-      if (!heatEl) return;
-      heatEl.className = `heat${state.heatMode === "week" ? " week" : ""}`;
-      heatEl.style.gridTemplateColumns = `repeat(${weeks},minmax(0,1fr))`;
-      if (state.heatMode === "week") {
-        heatEl.style.setProperty("grid-template-columns", `repeat(${Math.ceil(weeks / 2)},minmax(0,1fr))`, "important");
-      }
-      const query = getQuery();
-      const buckets = [];
-      const heatFrag = document.createDocumentFragment();
-      for (let i = 0; i < (state.heatMode === "day" ? weeks * 7 : weeks); i++) {
-        const date = addDays(start, state.heatMode === "day" ? i : i * 7);
-        const to = state.heatMode === "day" ? date : addDays(date, 6);
-        buckets.push(
-          state.heatMode === "day" ? dayIndex.totals(date, date, query) : dayIndex.totals(date < `${state.year}-01-01` ? `${state.year}-01-01` : date, to > end ? end : to, query)
-        );
-      }
-      const max = Math.max(1, ...buckets.map((b) => b.total));
-      let lastActiveBtn = null;
-      let lastUsableBtn = null;
-      for (const bucket of buckets) {
-        const button = createDomNode("button");
-        button.type = "button";
-        const future = bucket.from > state.value.today || bucket.to < `${state.year}-01-01` || bucket.from > `${state.year}-12-31`;
-        button.dataset.level = bucket.total === 0 ? "0" : String(Math.min(4, Math.ceil(bucket.total / max * 4)));
-        if (future) {
-          button.className = "future";
-          button.disabled = true;
-        } else {
-          tooltip.bindBucket(button, bucket, (picked) => {
-            state.selected = picked;
-            state.anchor = picked.from;
-            showSelection();
-          });
-          lastUsableBtn = button;
-          if (button.dataset.level !== "0") lastActiveBtn = button;
-        }
-        button.tabIndex = -1;
-        heatFrag.append(button);
-      }
-      if (lastActiveBtn || lastUsableBtn) (lastActiveBtn || lastUsableBtn).tabIndex = 0;
-      heatEl.replaceChildren(heatFrag);
-      const monthsFrag = document.createDocumentFragment();
-      const weekdaysFrag = document.createDocumentFragment();
-      const monthsEl = $("months");
-      if (state.heatMode === "day" && monthsEl) {
-        monthsEl.style.gridTemplateColumns = `repeat(${weeks},minmax(0,1fr))`;
-        for (let m = 1; m <= 12; m++) {
-          const date = `${state.year}-${String(m).padStart(2, "0")}-01`;
-          const col = Math.floor((Date.parse(date) - Date.parse(start)) / 6048e5) + 1;
-          const label = createDomNode("span", "", zh() ? `${m}\u6708` : EN_MONTHS[m - 1]);
-          label.style.gridColumn = String(col);
-          label.style.gridRow = "1";
-          monthsFrag.append(label);
-        }
-        for (let i = 0; i < 7; i++) {
-          weekdaysFrag.append(createDomNode("span", "", i % 2 === 0 ? zh() ? ZH_WEEKDAYS[i] : EN_WEEKDAYS[i] : ""));
-        }
-      }
-      monthsEl?.replaceChildren(monthsFrag);
-      $("weekdays")?.replaceChildren(weekdaysFrag);
-      text("heat-sub", state.heatMode === "day" ? w("\u6BCF\u683C\u4EE3\u8868\u4E00\u5929", "Each square is one day") : w("\u6BCF\u683C\u4EE3\u8868\u4E00\u5468 \xB7 \u5468\u4E00\u5F00\u59CB", "Each square is one week \xB7 starts Monday"));
-      const annual = dayIndex.totals(`${state.year}-01-01`, `${state.year}-12-31`, query);
-      text("heat-summary", w(`${state.year} \u5E74 \xB7 ${full(annual.total)} Token`, `${state.year} \xB7 ${full(annual.total)} tokens`));
-      for (const b of view.querySelectorAll("[data-heat]")) {
-        b.setAttribute("aria-pressed", String(b.dataset.heat === state.heatMode));
-      }
-      showSelection();
-    };
-    $("year")?.addEventListener("click", () => $("year-menu")?.matches(":popover-open") ? closeYear() : openYear());
-    $("year")?.addEventListener("keydown", (event) => {
-      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-        event.preventDefault();
-        openYear();
-        const menu = $("year-menu");
-        if (event.key === "Home") menu?.firstElementChild?.focus();
-        if (event.key === "End") menu?.lastElementChild?.focus();
-      }
-    });
-    $("year-menu")?.addEventListener("keydown", (event) => {
-      const optionsList = [...$("year-menu")?.children || []];
-      const current = optionsList.indexOf(view.activeElement);
-      let next = null;
-      if (event.key === "ArrowDown") next = Math.min(optionsList.length - 1, current + 1);
-      else if (event.key === "ArrowUp") next = Math.max(0, current - 1);
-      else if (event.key === "Home") next = 0;
-      else if (event.key === "End") next = optionsList.length - 1;
-      if (next !== null) {
-        event.preventDefault();
-        optionsList[next]?.focus({ preventScroll: true });
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        closeYear();
-      } else if (event.key === "Tab") {
-        closeYear();
-      }
-    });
-    const closeYearOnScroll = () => closeYear(false);
-    view.addEventListener("pointerdown", (event) => {
-      const path = event.composedPath();
-      const yearBtn = $("year");
-      const yearMenu = $("year-menu");
-      if (yearBtn && yearMenu && !path.includes(yearBtn) && !path.includes(yearMenu)) closeYear(false);
-    });
-    page.addEventListener("scroll", closeYearOnScroll, { passive: true });
-    window.addEventListener("resize", positionYear);
-    $("heat")?.addEventListener("keydown", (event) => {
-      const buttons = [...$("heat")?.children || []];
-      const target = event.target;
-      const index = buttons.indexOf(target);
-      if (index < 0) return;
-      const half = Math.ceil(buttons.length / 2);
-      const delta = state.heatMode === "day" ? { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 } : { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -half, ArrowDown: half };
-      const next = event.key === "Home" ? buttons.findIndex((b) => !b.disabled) : event.key === "End" ? buttons.findLastIndex((b) => !b.disabled) : index + (delta[event.key] ?? NaN);
-      if (!Number.isFinite(next) || next < 0 || next >= buttons.length || buttons[next].disabled) return;
-      event.preventDefault();
-      target.tabIndex = -1;
-      buttons[next].tabIndex = 0;
-      buttons[next].focus();
-    });
-    return {
-      renderHeat,
-      showSelection,
-      syncYear,
-      closeYear,
-      positionYear,
-      isYearOpen: () => Boolean($("year-menu")?.matches(":popover-open")),
-      dispose() {
-        closeYear(false);
-        window.removeEventListener("resize", positionYear);
-        page.removeEventListener("scroll", closeYearOnScroll);
-      }
-    };
-  }
-
-  // src/ui/usage-modal/manual-modal.ts
-  function renderManualEntries(ctx) {
-    const { state, options, $, text, w, zh, compactNum } = ctx;
-    const entries = state.value?.manualEntries || [];
-    const sig = `${options.language.language}|${state.value?.accountKey}|${JSON.stringify(entries)}`;
-    if (sig === state.lastManualSig) return;
-    state.lastManualSig = sig;
-    text("manual-title", w("\u8FDC\u7A0B\u9879\u76EE\u624B\u52A8\u5F55\u5165\u7528\u91CF", "Remote Project Manual Usage"));
-    $("manual-table-head")?.replaceChildren(
-      ...[
-        w("\u9879\u76EE\u540D\u79F0", "Project"),
-        w("\u65F6\u95F4", "Datetime"),
-        w("\u6A21\u578B", "Model"),
-        w("\u8F93\u5165 / \u8865\u5168", "Prompt / Output"),
-        w("\u603B\u7528\u91CF", "Total"),
-        w("\u5907\u6CE8", "Note"),
-        w("\u64CD\u4F5C", "Action")
-      ].map((label) => createDomNode("th", "", label))
-    );
-    const bodyFrag = document.createDocumentFragment();
-    if (!entries.length) {
-      const row = createDomNode("tr");
-      const cell = createDomNode("td", "muted", w("\u6682\u65E0\u624B\u52A8\u5F55\u5165\u8BB0\u5F55", "No manual entries recorded"));
-      cell.colSpan = 7;
-      cell.style.textAlign = "center";
-      cell.style.padding = "20px";
-      row.append(cell);
-      bodyFrag.append(row);
-      $("manual-table-body")?.replaceChildren(bodyFrag);
-      return;
-    }
-    for (const entry of entries) {
-      const row = createDomNode("tr");
-      const prompt = entry.tokens?.prompt ?? 0;
-      const candidates = entry.tokens?.candidates ?? 0;
-      const total = entry.tokens?.total ?? Number(prompt) + Number(candidates);
-      const dt = typeof entry.timestamp === "number" ? new Date(entry.timestamp).toLocaleString(zh() ? "zh-CN" : "en-US") : entry.timestamp ? String(entry.timestamp).replace("T", " ").slice(0, 19) : "\u2014";
-      const tdProj = createDomNode("td", "", entry.projectName || "\u2014");
-      const tdTime = createDomNode("td", "", dt);
-      const tdModel = createDomNode("td", "", formatModelName(entry.model || ""));
-      const tdTokens = createDomNode("td", "", `${compactNum(prompt)} / ${compactNum(candidates)}`);
-      const tdTotal = createDomNode("td", "", compactNum(total));
-      const tdNote = createDomNode("td", "", entry.note || "\u2014");
-      const tdAction = createDomNode("td");
-      const delBtn = createDomNode("button", "btn-delete", w("\u5220\u9664", "Delete"));
-      delBtn.type = "button";
-      delBtn.addEventListener("click", async () => {
-        delBtn.disabled = true;
-        const bridge = resolveUsageBridge(options);
-        try {
-          if (bridge?.deleteManualUsage) {
-            await bridge.deleteManualUsage({ scope: state.value?.accountKey, id: entry.id });
-          }
-          await options.onRefresh();
-        } catch {
-          delBtn.disabled = false;
-        }
-      });
-      tdAction.append(delBtn);
-      row.append(tdProj, tdTime, tdModel, tdTokens, tdTotal, tdNote, tdAction);
-      bodyFrag.append(row);
-    }
-    $("manual-table-body")?.replaceChildren(bodyFrag);
-  }
-  function bindManualModal(ctx) {
-    const { $, state, options } = ctx;
-    const closeManualModal = (restore = true) => {
-      const modal = $("manual-modal");
-      if (!modal || modal.hidden) return;
-      modal.hidden = true;
-      if (restore) $("add-manual")?.focus({ preventScroll: true });
-    };
-    $("add-manual")?.addEventListener("click", () => {
-      const modal = $("manual-modal");
-      const form = $("manual-form");
-      if (modal) modal.hidden = false;
-      form?.reset();
-      const accList = (state.value?.accounts || []).filter((a) => a.id !== "all");
-      if (!accList.length && (state.value?.activeAccount || state.value?.accountKey)) {
-        const id = state.value.activeAccount || state.value.accountKey;
-        accList.push({ id, name: id, active: true });
-      }
-      const accountSel = $("manual-account");
-      accountSel?.replaceChildren(
-        ...accList.map((a) => {
-          const opt = document.createElement("option");
-          opt.value = a.id;
-          opt.textContent = a.name || a.email || a.id;
-          opt.selected = a.id === (state.value?.activeAccount || state.value?.accountKey);
-          return opt;
-        })
-      );
-      const accRow = $("manual-account-row");
-      if (accRow) accRow.hidden = accList.length <= 1;
-      const now = /* @__PURE__ */ new Date();
-      const pad = (n) => String(n).padStart(2, "0");
-      const dtInput = $("manual-datetime");
-      if (dtInput) {
-        dtInput.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-      }
-      $("manual-model-list")?.replaceChildren(
-        ...(state.value?.models || []).map((m) => {
-          const opt = document.createElement("option");
-          opt.value = m;
-          return opt;
-        })
-      );
-      $("manual-project")?.focus();
-    });
-    $("manual-cancel")?.addEventListener("click", () => closeManualModal());
-    $("manual-modal")?.addEventListener("click", (e) => {
-      if (e.target === $("manual-modal")) closeManualModal();
-    });
-    $("manual-form")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const submitBtn = $("manual-submit");
-      if (submitBtn) submitBtn.disabled = true;
-      const chosenScope = $("manual-account")?.value || (state.value?.accountKey !== "all" ? state.value?.accountKey : state.value?.activeAccount) || state.value?.accounts?.find((a) => a.id !== "all")?.id;
-      const project = $("manual-project")?.value.trim() || "";
-      const dt = $("manual-datetime")?.value || "";
-      const model = $("manual-model")?.value.trim() || "";
-      const promptTokens = Number($("manual-prompt")?.value || 0);
-      const completionTokens = Number($("manual-completion")?.value || 0);
-      const cacheTokens = Number($("manual-cache")?.value || 0);
-      const note = $("manual-note")?.value.trim() || "";
-      const payload = {
-        scope: chosenScope,
-        source: "remote-manual",
-        projectName: project,
-        timestamp: new Date(dt).toISOString(),
-        at: Date.parse(dt),
-        model,
-        tokens: {
-          prompt: promptTokens,
-          candidates: completionTokens,
-          cacheRead: cacheTokens,
-          cache: cacheTokens,
-          total: promptTokens + completionTokens
-        },
-        promptTokens,
-        completionTokens,
-        cacheTokens,
-        note
-      };
-      const bridge = resolveUsageBridge(options);
-      try {
-        if (bridge?.addManualUsage) await bridge.addManualUsage(payload);
-        closeManualModal();
-        await options.onRefresh();
-      } catch {
-      } finally {
-        if (submitBtn) submitBtn.disabled = false;
-      }
-    });
-    return { closeManualModal };
-  }
-
-  // src/ui/shared/model-donut.ts
-  var SVG_NS3 = "http://www.w3.org/2000/svg";
-  var ROLE_COLORS = {
-    plan: "var(--pulse-accent)",
-    worker: "var(--pulse-success)",
-    subagent: "var(--pulse-warning)"
-  };
-  var PANEL_MIX_PALETTE = [
-    "var(--pulse-accent)",
-    "var(--pulse-success)",
-    "var(--pulse-warning)",
-    "#c084fc",
-    "#38bdf8",
-    "#fb7185"
-  ];
-  function metricValueOf(model, metric = "total") {
-    if (!model) return 0;
-    if (metric === "calls") return Number(model.requests) || 0;
-    if (metric === "output") return Number(model.outputTokens) || 0;
-    return Number(model.totalTokens) || 0;
-  }
-  function assignModelColors(models, palette = PANEL_MIX_PALETTE) {
-    const used = /* @__PURE__ */ new Set();
-    const map = /* @__PURE__ */ new Map();
-    models.forEach((entry, idx) => {
-      const key = typeof entry === "string" ? entry : entry.name || entry.id;
-      if (!key || map.has(key)) return;
-      const role = typeof entry === "string" ? null : entry.role ?? null;
-      const preferred = role ? ROLE_COLORS[role] : void 0;
-      let chosen;
-      if (preferred && !used.has(preferred)) {
-        chosen = preferred;
-      } else {
-        chosen = palette.find((c) => !used.has(c)) ?? palette[idx % palette.length];
-      }
-      used.add(chosen);
-      map.set(key, chosen);
-    });
-    return map;
-  }
-  function partitionModelSlices(models, options) {
-    const metric = options.metric ?? "total";
-    const sorted = [...models].sort(
-      (a, b) => metricValueOf(b, metric) - metricValueOf(a, metric) || (Number(b?.totalTokens) || 0) - (Number(a?.totalTokens) || 0) || (Number(b?.requests) || 0) - (Number(a?.requests) || 0)
-    );
-    const capped = sorted.length > options.maxVisible ? [
-      ...sorted.slice(0, options.headCount),
-      sorted.slice(options.headCount).reduce(
-        (acc, m) => ({
-          id: "__other__",
-          name: options.otherLabel,
-          role: "model",
-          requests: acc.requests + (Number(m?.requests) || 0),
-          outputTokens: acc.outputTokens + (Number(m?.outputTokens) || 0),
-          totalTokens: acc.totalTokens + (Number(m?.totalTokens) || 0)
-        }),
-        { id: "__other__", name: options.otherLabel, role: "model", requests: 0, outputTokens: 0, totalTokens: 0 }
-      )
-    ] : sorted;
-    const palette = options.palette ?? PANEL_MIX_PALETTE;
-    const colorMap = assignModelColors(capped, palette);
-    const totalMetric = capped.reduce((sum, m) => sum + Math.max(0, metricValueOf(m, metric)), 0);
-    return capped.map((m, idx) => {
-      const id = String(m?.id || m?.name || idx);
-      const name = String(m?.name || m?.id || "\u2014");
-      const val = Math.max(0, metricValueOf(m, metric));
-      const resolvedColor = id === "__other__" && options.otherColor ? options.otherColor : colorMap.get(m?.name || m?.id || name) || palette[idx % palette.length];
-      return {
-        id,
-        name,
-        role: String(m?.role || "model"),
-        requests: Number(m?.requests) || 0,
-        outputTokens: Number(m?.outputTokens) || 0,
-        totalTokens: Number(m?.totalTokens) || 0,
-        value: val,
-        share: totalMetric > 0 ? val / totalMetric : 0,
-        color: resolvedColor
-      };
-    });
-  }
-  function createDonutSegment(opts, doc = document) {
-    const circle = doc.createElementNS(SVG_NS3, "circle");
-    circle.setAttribute("class", opts.className);
-    circle.setAttribute("cx", String(opts.cx));
-    circle.setAttribute("cy", String(opts.cy));
-    circle.setAttribute("r", String(opts.r));
-    if (opts.pathLength != null) circle.setAttribute("pathLength", String(opts.pathLength));
-    circle.setAttribute("stroke-dasharray", opts.dasharray);
-    circle.setAttribute("stroke-dashoffset", opts.dashoffset);
-    circle.dataset.modelId = opts.modelId;
-    circle.style.setProperty("stroke", opts.color);
-    if (opts.tabIndex != null) circle.setAttribute("tabindex", String(opts.tabIndex));
-    if (opts.role) circle.setAttribute("role", opts.role);
-    if (opts.ariaLabel) circle.setAttribute("aria-label", opts.ariaLabel);
-    return circle;
-  }
-  function formatQuotaGroupLabel(group, fallback = "") {
-    const name = group?.name || "";
-    if (/gemini/i.test(name)) return "Gemini";
-    if (/claude|gpt/i.test(name)) return "Claude / GPT";
-    return name || fallback;
-  }
-  function selectPreferredQuotaGroup(groups, chosenId, modelName) {
-    const model = String(modelName || "").toLowerCase();
-    return groups.find((g) => g.id === chosenId) ?? groups.find(
-      (g) => /gemini/.test(model) ? /gemini/i.test(g.id) : /claude|gpt/.test(model) ? /3p|claude|gpt/i.test(g.id) : false
-    ) ?? groups[0];
-  }
-
-  // src/ui/usage-modal/project-detail.ts
-  var INITIAL_VISIBLE_MAIN = 10;
-  var DONUT_PALETTE = [
-    "#5b8ff9",
-    "#5ad8a6",
-    "#5d7092",
-    "#f6bd16",
-    "#e86452",
-    "#6dc8ec",
-    "#945fb9",
-    "#ff9845",
-    "#1e9493",
-    "#ff99c3",
-    "#269a99",
-    "#9270ca",
-    "#52c41a",
-    "#fa8c16",
-    "#2f54eb"
-  ];
-  function buildMergedGroups(items, totalTokens) {
-    const mainByTitle = /* @__PURE__ */ new Map();
-    for (const item of items) {
-      if (!item.isSubagent) mainByTitle.set(item.title.toLowerCase(), item);
-    }
-    const groups = /* @__PURE__ */ new Map();
-    for (const item of items) {
-      const inferredRoot = item.isSubagent && !item.rootId && item.title.includes(" \xB7 ") ? mainByTitle.get(item.title.slice(0, item.title.lastIndexOf(" \xB7 ")).toLowerCase()) : void 0;
-      const rawRootId = item.isSubagent ? item.rootId || inferredRoot?.id || item.id : item.id;
-      const key = rawRootId.toLowerCase();
-      let group = groups.get(key);
-      if (!group) {
-        const rootTitle = item.isSubagent ? item.rootTitle || inferredRoot?.title || item.title.split(" \xB7 ")[0] || item.title : item.title;
-        group = {
-          id: rawRootId,
-          title: rootTitle,
-          uncached: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          output: 0,
-          total: 0,
-          requests: 0,
-          share: 0,
-          isRemote: item.isRemote,
-          selfTotal: 0,
-          selfRequests: 0,
-          selfUncached: 0,
-          selfCacheRead: 0,
-          selfOutput: 0,
-          subagents: []
-        };
-        groups.set(key, group);
-      }
-      group.uncached += item.uncached;
-      group.cacheRead += item.cacheRead;
-      group.cacheWrite += item.cacheWrite;
-      group.output += item.output;
-      group.total += item.total;
-      group.requests += item.requests;
-      if (item.isSubagent) {
-        group.subagents.push(item);
-      } else {
-        group.title = item.title;
-        group.isRemote = item.isRemote;
-        group.selfTotal += item.total;
-        group.selfRequests += item.requests;
-        group.selfUncached += item.uncached;
-        group.selfCacheRead += item.cacheRead;
-        group.selfOutput += item.output;
-      }
-    }
-    const result = Array.from(groups.values());
-    for (const g of result) {
-      g.share = totalTokens > 0 ? g.total / totalTokens : 0;
-      g.subagents.sort((a, b) => b.total - a.total || a.title.localeCompare(b.title));
-    }
-    result.sort((a, b) => b.total - a.total || a.title.localeCompare(b.title));
-    return result;
-  }
-  function subagentDisplayLabel(sub, parentTitle) {
-    if (sub.agentName) return sub.agentName;
-    const prefix = `${parentTitle} \xB7 `;
-    if (sub.title.startsWith(prefix)) return sub.title.slice(prefix.length) || sub.title;
-    const idx = sub.title.lastIndexOf(" \xB7 ");
-    return idx >= 0 ? sub.title.slice(idx + 3) || sub.title : sub.title;
-  }
-  function createProjectDetailController(ctx, palette, tooltip, onSelectProject) {
-    const { $, w, full, compactNum, state, dialog, view, options } = ctx;
-    const host = $("project-detail-section");
-    let picker = null;
-    let lastRenderSig = "";
-    let lastDetailIdentity = "";
-    let expandAllSubagents = false;
-    let showAllMain = false;
-    let reassignOpenId = null;
-    let reassignBusy = false;
-    const expandedMainIds = /* @__PURE__ */ new Set();
-    let renderedGroups = [];
-    let renderedSlices = [];
-    if (host) {
-      options.setMarkup(
-        host,
-        '<div class="project-detail-head"><div class="project-detail-title-group"><h2 id="project-detail-title"></h2><div class="picker" id="project-detail-picker"><button id="project-detail-trigger" type="button" class="picker-trigger" aria-haspopup="listbox" aria-controls="project-detail-menu" aria-expanded="false"><span id="project-detail-label"></span><svg class="picker-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div id="project-detail-menu" class="picker-menu" role="listbox" popover="manual"></div></div></div><div id="project-detail-summary" class="muted"></div></div><div id="project-detail-body" class="project-detail-body"></div>'
-      );
-      const trigger = $("project-detail-trigger");
-      const menu = $("project-detail-menu");
-      const labelEl = $("project-detail-label");
-      if (trigger && menu && labelEl) {
-        picker = createPopoverListbox({
-          trigger,
-          menu,
-          labelEl,
-          dialog,
-          view,
-          setMarkup: options.setMarkup,
-          getSelected: () => state.selectedProjectKey || "",
-          placeholder: () => w("\u9009\u62E9\u9879\u76EE\u2026", "Select project\u2026"),
-          onSelect: (projectKey) => onSelectProject(projectKey)
-        });
-      }
-    }
-    const syncPicker = () => {
-      if (!picker) return;
-      const projects = state.projectOverview?.projects || [];
-      picker.setOptions(
-        projects.map((p) => ({ value: p.projectKey, label: p.name, hint: compactNum(p.total) })),
-        w("\u9009\u62E9\u9879\u76EE", "Select project")
-      );
-    };
-    const applyHighlight = (convId) => {
-      state.activeConvId = convId;
-      if (!host) return;
-      for (const seg of host.querySelectorAll(".proj-donut-seg[data-model-id]")) {
-        const id = seg.dataset.modelId || "";
-        seg.classList.toggle("is-active", Boolean(convId && id === convId));
-        seg.classList.toggle("is-dimmed", Boolean(convId && id !== convId));
-      }
-      for (const row of host.querySelectorAll("[data-conv-id]")) {
-        const id = row.dataset.convId || "";
-        row.classList.toggle("is-active", Boolean(convId && id === convId));
-      }
-      const centerVal = $("proj-donut-center-val");
-      const centerSub = $("proj-donut-center-sub");
-      if (centerVal && centerSub) {
-        if (convId) {
-          const sl = renderedSlices.find((s) => s.id === convId);
-          if (sl) {
-            centerVal.textContent = `${(sl.share * 100).toFixed(1)}%`;
-            centerSub.textContent = sl.name;
-            return;
-          }
-        }
-        centerVal.textContent = compactNum(state.projectDetail?.totalTokens ?? 0);
-        centerSub.textContent = w("\u9879\u76EE\u603B\u7528\u91CF", "Project total");
-      }
-    };
-    const showTip = (target, title, stats) => {
-      if (!target) return;
-      tooltip.showNodes(target, [
-        createDomNode("div", "tip-title", title),
-        createDomNode("strong", "", `${full(stats.total)} Token`),
-        createDomNode("div", "muted", `${(stats.share * 100).toFixed(1)}% \xB7 ${stats.requests} ${w("\u6B21\u8BF7\u6C42", "requests")}`),
-        createDomNode(
-          "div",
-          "tip-sub",
-          `${w("\u8F93\u5165", "Uncached")}: ${compactNum(stats.uncached)} \xB7 ${w("\u7F13\u5B58\u8BFB", "Cache read")}: ${compactNum(stats.cacheRead)} \xB7 ${w("\u8F93\u51FA", "Output")}: ${compactNum(stats.output)}`
-        )
-      ]);
-    };
-    const renderLoaded = (body) => {
-      const detail = state.projectDetail;
-      if (!detail) return;
-      const prevScroll = body.querySelector(".proj-bars")?.scrollTop ?? 0;
-      const prevDonutScroll = body.querySelector(".proj-donut-list")?.scrollTop ?? 0;
-      if (!renderedGroups.length) {
-        body.replaceChildren(
-          createDomNode(
-            "div",
-            "project-detail-empty",
-            w("\u8BE5\u9879\u76EE\u5728\u6B64\u65F6\u95F4\u8303\u56F4\u5185\u6682\u65E0\u4F1A\u8BDD\u7528\u91CF\u8BB0\u5F55\u3002", "No conversation token usage recorded for this project in range.")
-          )
-        );
-        return;
-      }
-      const totalSubagents = renderedGroups.reduce((s, g) => s + g.subagents.length, 0);
-      const donutHeadCount = showAllMain ? renderedGroups.length : 6;
-      const slices = partitionModelSlices(
-        renderedGroups.map((g) => ({
-          id: g.id,
-          name: g.title,
-          role: "model",
-          requests: g.requests,
-          inputTokens: g.uncached + g.cacheRead + g.cacheWrite,
-          uncachedTokens: g.uncached,
-          cachedTokens: g.cacheRead,
-          cacheWriteTokens: g.cacheWrite,
-          outputTokens: g.output,
-          thinkingTokens: 0,
-          totalTokens: g.total
-        })),
-        {
-          metric: "total",
-          maxVisible: showAllMain ? renderedGroups.length : 7,
-          headCount: donutHeadCount,
-          otherLabel: w("\u5176\u4ED6\u4F1A\u8BDD", "Other sessions"),
-          otherColor: "#8c95a6",
-          palette: [...DONUT_PALETTE]
-        }
-      );
-      renderedSlices = slices;
-      const colorById = new Map(slices.map((s) => [s.id, s.color]));
-      const maxTotal = renderedGroups[0]?.total || 1;
-      const grid = createDomNode("div", "proj-detail-grid");
-      const barPanel = createDomNode("div", "proj-bar-panel");
-      const barHead = createDomNode("div", "proj-panel-head");
-      barHead.append(createDomNode("div", "proj-panel-label", w("\u4E3B\u4F1A\u8BDD\u7528\u91CF\u5206\u5E03", "Main Session Distribution")));
-      const actions = createDomNode("div", "proj-panel-actions");
-      if (totalSubagents > 0) {
-        const subBtn = createDomNode(
-          "button",
-          "proj-action-btn",
-          expandAllSubagents ? w("\u6536\u8D77\u5B50\u4EE3\u7406", "Collapse subagents") : w(`\u5C55\u5F00\u5B50\u4EE3\u7406 (${totalSubagents})`, `Expand subagents (${totalSubagents})`)
-        );
-        subBtn.id = "proj-toggle-subagents";
-        subBtn.type = "button";
-        subBtn.setAttribute("aria-pressed", String(expandAllSubagents));
-        subBtn.addEventListener("click", () => {
-          expandAllSubagents = !expandAllSubagents;
-          expandedMainIds.clear();
-          renderLoaded(body);
-        });
-        actions.append(subBtn);
-      }
-      if (renderedGroups.length > INITIAL_VISIBLE_MAIN) {
-        const allBtn = createDomNode(
-          "button",
-          "proj-action-btn",
-          showAllMain ? w(`\u6536\u8D77 (\u524D${INITIAL_VISIBLE_MAIN})`, `Top ${INITIAL_VISIBLE_MAIN}`) : w(`\u67E5\u770B\u5168\u90E8\u4F1A\u8BDD (${renderedGroups.length})`, `View all (${renderedGroups.length})`)
-        );
-        allBtn.id = "proj-toggle-all";
-        allBtn.type = "button";
-        allBtn.setAttribute("aria-pressed", String(showAllMain));
-        allBtn.addEventListener("click", () => {
-          showAllMain = !showAllMain;
-          renderLoaded(body);
-        });
-        actions.append(allBtn);
-      }
-      if (actions.childElementCount > 0) barHead.append(actions);
-      barPanel.append(barHead);
-      const barsWrap = createDomNode("div", `proj-bars${showAllMain ? " is-all" : ""}`);
-      const shown = showAllMain ? renderedGroups : renderedGroups.slice(0, INITIAL_VISIBLE_MAIN);
-      const bridge = resolveUsageBridge(options);
-      const realAccounts = (state.value?.accounts || []).filter(
-        (a) => Boolean(a && typeof a === "object" && typeof a.id === "string" && a.id !== "all")
-      );
-      const canReassign = Boolean(bridge?.reassignConversation && realAccounts.length >= 2);
-      const toggleMainRow = (groupId) => {
-        if (expandAllSubagents) {
-          expandAllSubagents = false;
-          for (const g of renderedGroups) {
-            if (g.subagents.length > 0 && g.id !== groupId) expandedMainIds.add(g.id);
-          }
-        } else if (expandedMainIds.has(groupId)) {
-          expandedMainIds.delete(groupId);
-        } else {
-          expandedMainIds.add(groupId);
-        }
-        renderLoaded(body);
-      };
-      for (const group of shown) {
-        const wrap = createDomNode("div", "proj-bar-group");
-        const hasSub = group.subagents.length > 0;
-        const isExpanded = hasSub && (expandAllSubagents || expandedMainIds.has(group.id));
-        const color = colorById.get(group.id) || "#8c95a6";
-        const row = createDomNode("div", "proj-bar-row");
-        row.dataset.convId = group.id;
-        row.tabIndex = 0;
-        if (hasSub) {
-          row.setAttribute("role", "button");
-          row.setAttribute("aria-expanded", String(isExpanded));
-        }
-        const metaRow = createDomNode("div", "proj-bar-meta");
-        const titleWrap = createDomNode("span", "proj-bar-title");
-        titleWrap.title = group.title;
-        if (hasSub) titleWrap.append(createDomNode("span", "proj-bar-caret", isExpanded ? "\u25BE" : "\u25B8"));
-        titleWrap.append(createDomNode("span", "proj-bar-name", group.title));
-        if (hasSub) {
-          titleWrap.append(createDomNode("span", "proj-badge", w(`\u542B ${group.subagents.length} \u5B50\u4EE3\u7406`, `${group.subagents.length} sub`)));
-        }
-        if (group.isRemote) titleWrap.append(createDomNode("span", "proj-badge", w("\u8FDC\u7A0B", "Remote")));
-        if (canReassign) {
-          const moveBtn = createDomNode("button", "proj-reassign-btn", w("\u6539\u5F52\u5C5E", "Move"));
-          moveBtn.type = "button";
-          moveBtn.title = w("\u5C06\u8BE5\u4F1A\u8BDD\uFF08\u542B\u5B50\u4EE3\u7406\uFF09\u8FC1\u79FB\u5230\u5176\u4ED6\u8D26\u53F7", "Move this conversation (and subagents) to another account");
-          moveBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            reassignOpenId = reassignOpenId === group.id ? null : group.id;
-            renderLoaded(body);
-          });
-          moveBtn.addEventListener("keydown", (e) => e.stopPropagation());
-          titleWrap.append(moveBtn);
-        }
-        metaRow.append(titleWrap, createDomNode("span", "proj-bar-val", `${compactNum(group.total)} (${(group.share * 100).toFixed(1)}%)`));
-        const track = createDomNode("div", "proj-bar-track");
-        const fill = createDomNode("div", "proj-bar-fill");
-        fill.style.width = `${Math.max(2, Math.round(group.total / maxTotal * 1e3) / 10)}%`;
-        fill.style.background = color;
-        track.append(fill);
-        row.append(metaRow, track);
-        row.addEventListener("pointerenter", (e) => {
-          applyHighlight(group.id);
-          showTip(e.currentTarget, group.title, group);
-        });
-        row.addEventListener("pointerleave", () => {
-          applyHighlight(null);
-          tooltip.hide();
-        });
-        row.addEventListener("focus", (e) => {
-          applyHighlight(group.id);
-          showTip(e.currentTarget, group.title, group);
-        });
-        row.addEventListener("blur", () => {
-          applyHighlight(null);
-          tooltip.hide();
-        });
-        if (hasSub) {
-          row.addEventListener("click", () => toggleMainRow(group.id));
-          row.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              toggleMainRow(group.id);
-            }
-          });
-        }
-        wrap.append(row);
-        if (canReassign && reassignOpenId === group.id) {
-          const bar = createDomNode("div", "proj-reassign-bar");
-          bar.append(createDomNode("span", "muted", w("\u8FC1\u79FB\u81F3\u8D26\u53F7\uFF1A", "Move to account:")));
-          const selectEl = createDomNode("select", "proj-reassign-select");
-          const currentViewScope = state.value?.viewScope || "";
-          const defaultTarget = realAccounts.find((a) => a.id !== currentViewScope)?.id || realAccounts[0]?.id || "";
-          for (const acc of realAccounts) {
-            const opt = document.createElement("option");
-            opt.value = acc.id;
-            opt.textContent = acc.email || acc.name || acc.id.slice(0, 10);
-            opt.selected = acc.id === defaultTarget;
-            selectEl.append(opt);
-          }
-          const confirmBtn = createDomNode(
-            "button",
-            "proj-action-btn is-primary",
-            reassignBusy ? w("\u8FC1\u79FB\u4E2D\u2026", "Moving\u2026") : w("\u786E\u8BA4\u8FC1\u79FB", "Confirm")
-          );
-          confirmBtn.type = "button";
-          confirmBtn.disabled = reassignBusy;
-          const cancelBtn = createDomNode("button", "proj-action-btn", w("\u53D6\u6D88", "Cancel"));
-          cancelBtn.type = "button";
-          cancelBtn.disabled = reassignBusy;
-          cancelBtn.addEventListener("click", () => {
-            reassignOpenId = null;
-            renderLoaded(body);
-          });
-          confirmBtn.addEventListener("click", () => {
-            if (reassignBusy || !selectEl.value || !bridge?.reassignConversation) return;
-            reassignBusy = true;
-            renderLoaded(body);
-            const allIds = [group.id, ...group.subagents.map((s) => s.id)];
-            void bridge.reassignConversation({ conversationIds: allIds, targetScope: selectEl.value }).then(async () => {
-              reassignOpenId = null;
-              await options.onRefresh();
-              if (state.selectedProjectKey) onSelectProject(state.selectedProjectKey);
-            }).finally(() => {
-              reassignBusy = false;
-              renderLoaded(body);
-            });
-          });
-          bar.append(selectEl, confirmBtn, cancelBtn);
-          wrap.append(bar);
-        }
-        if (isExpanded) {
-          const subList = createDomNode("div", "proj-subagent-list");
-          const subBase = group.total || 1;
-          if (group.selfTotal > 0) {
-            const selfRow = createDomNode("div", "proj-subagent-row");
-            const sMeta = createDomNode("div", "proj-bar-meta");
-            const sTitle = createDomNode("span", "proj-bar-title");
-            sTitle.append(createDomNode("span", "proj-bar-name", w("\u4E3B\u4F1A\u8BDD\u81EA\u8EAB", "Main session direct")));
-            const selfShare = detail.totalTokens > 0 ? group.selfTotal / detail.totalTokens : 0;
-            sMeta.append(sTitle, createDomNode("span", "proj-bar-val", `${compactNum(group.selfTotal)} (${(selfShare * 100).toFixed(1)}%)`));
-            const sTrack = createDomNode("div", "proj-bar-track");
-            const sFill = createDomNode("div", "proj-bar-fill");
-            sFill.style.width = `${Math.max(2, Math.round(group.selfTotal / subBase * 1e3) / 10)}%`;
-            sFill.style.background = color;
-            sTrack.append(sFill);
-            selfRow.append(sMeta, sTrack);
-            selfRow.addEventListener(
-              "pointerenter",
-              (e) => showTip(e.currentTarget, `${group.title} (${w("\u4E3B\u4F1A\u8BDD\u81EA\u8EAB", "Main direct")})`, {
-                total: group.selfTotal,
-                share: selfShare,
-                requests: group.selfRequests,
-                uncached: group.selfUncached,
-                cacheRead: group.selfCacheRead,
-                output: group.selfOutput
-              })
-            );
-            selfRow.addEventListener("pointerleave", () => tooltip.hide());
-            subList.append(selfRow);
-          }
-          for (const sub of group.subagents) {
-            const sRow = createDomNode("div", "proj-subagent-row");
-            const label = subagentDisplayLabel(sub, group.title);
-            const sMeta = createDomNode("div", "proj-bar-meta");
-            const sTitle = createDomNode("span", "proj-bar-title");
-            sTitle.title = sub.title;
-            sTitle.append(
-              createDomNode("span", "proj-bar-name", label),
-              createDomNode("span", "proj-badge", w("\u5B50\u4EE3\u7406", "Subagent"))
-            );
-            sMeta.append(sTitle, createDomNode("span", "proj-bar-val", `${compactNum(sub.total)} (${(sub.share * 100).toFixed(1)}%)`));
-            const sTrack = createDomNode("div", "proj-bar-track");
-            const sFill = createDomNode("div", "proj-bar-fill");
-            sFill.style.width = `${Math.max(2, Math.round(sub.total / subBase * 1e3) / 10)}%`;
-            sFill.style.background = color;
-            sTrack.append(sFill);
-            sRow.append(sMeta, sTrack);
-            sRow.addEventListener("pointerenter", (e) => showTip(e.currentTarget, sub.title, sub));
-            sRow.addEventListener("pointerleave", () => tooltip.hide());
-            subList.append(sRow);
-          }
-          wrap.append(subList);
-        }
-        barsWrap.append(wrap);
-      }
-      if (renderedGroups.length > INITIAL_VISIBLE_MAIN) {
-        const foot = createDomNode("div", "proj-bars-more muted");
-        foot.append(
-          createDomNode(
-            "span",
-            "",
-            showAllMain ? w(`\u5DF2\u5C55\u5F00\u5168\u90E8 ${renderedGroups.length} \u4E2A\u4E3B\u4F1A\u8BDD`, `Showing all ${renderedGroups.length} main sessions`) : w(`\u4EC5\u5C55\u793A\u524D ${shown.length} \u4E2A\u4E3B\u4F1A\u8BDD\uFF08\u5171 ${renderedGroups.length} \u4E2A\uFF09`, `Showing top ${shown.length} of ${renderedGroups.length} main sessions`)
-          )
-        );
-        barsWrap.append(foot);
-      }
-      barPanel.append(barsWrap);
-      const donutPanel = createDomNode("div", "proj-donut-panel");
-      donutPanel.append(createDomNode("div", "proj-panel-label", w("\u4E3B\u4F1A\u8BDD\u5360\u6BD4\u73AF\u5F62\u56FE", "Main Session Share")));
-      const donutWrap = createDomNode("div", "proj-donut-layout");
-      const chartBox = createDomNode("div", "proj-donut-box");
-      const svg = document.createElementNS(SVG_NS3, "svg");
-      svg.setAttribute("viewBox", "0 0 120 120");
-      svg.setAttribute("class", "proj-donut-svg");
-      svg.setAttribute("aria-label", w("\u4E3B\u4F1A\u8BDD\u7528\u91CF\u73AF\u5F62\u56FE", "Main session share donut chart"));
-      const trackCircle = document.createElementNS(SVG_NS3, "circle");
-      trackCircle.setAttribute("class", "proj-donut-track");
-      trackCircle.setAttribute("cx", "60");
-      trackCircle.setAttribute("cy", "60");
-      trackCircle.setAttribute("r", "44");
-      svg.append(trackCircle);
-      let offset = 0;
-      for (const slice of slices) {
-        const len = Math.max(0.25, slice.share * 100);
-        const seg = createDonutSegment({
-          className: "proj-donut-seg",
-          cx: 60,
-          cy: 60,
-          r: 44,
-          pathLength: 100,
-          dasharray: `${len} ${Math.max(0, 100 - len)}`,
-          dashoffset: String(-offset),
-          modelId: slice.id,
-          color: slice.color,
-          tabIndex: 0,
-          role: "img",
-          ariaLabel: `${slice.name}: ${(slice.share * 100).toFixed(1)}%`
-        });
-        offset += slice.share * 100;
-        seg.addEventListener("pointerenter", () => applyHighlight(slice.id));
-        seg.addEventListener("pointerleave", () => applyHighlight(null));
-        seg.addEventListener("focus", () => applyHighlight(slice.id));
-        seg.addEventListener("blur", () => applyHighlight(null));
-        svg.append(seg);
-      }
-      const center = createDomNode("div", "proj-donut-center");
-      const cVal = createDomNode("strong", "", compactNum(detail.totalTokens));
-      cVal.id = "proj-donut-center-val";
-      const cSub = createDomNode("span", "", w("\u9879\u76EE\u603B\u7528\u91CF", "Project total"));
-      cSub.id = "proj-donut-center-sub";
-      center.append(cVal, cSub);
-      chartBox.append(svg, center);
-      const shareList = createDomNode("div", `proj-donut-list${showAllMain ? " is-all" : ""}`);
-      for (const slice of slices) {
-        const item = createDomNode("div", "proj-donut-item");
-        item.dataset.convId = slice.id;
-        const dot = createDomNode("i", "proj-donut-dot");
-        dot.style.background = slice.color;
-        const nameEl = createDomNode("span", "proj-donut-item-name", slice.name);
-        nameEl.title = slice.name;
-        item.append(dot, nameEl, createDomNode("span", "proj-donut-item-pct", `${(slice.share * 100).toFixed(1)}%`));
-        item.addEventListener("pointerenter", () => applyHighlight(slice.id));
-        item.addEventListener("pointerleave", () => applyHighlight(null));
-        item.addEventListener("click", () => {
-          applyHighlight(slice.id);
-          const targetBar = body.querySelector(`.proj-bar-row[data-conv-id="${CSS.escape(slice.id)}"]`);
-          targetBar?.scrollIntoView({ block: "nearest" });
-        });
-        shareList.append(item);
-      }
-      donutWrap.append(chartBox, shareList);
-      donutPanel.append(donutWrap);
-      grid.append(barPanel, donutPanel);
-      body.replaceChildren(grid);
-      if (prevScroll > 0) {
-        const newBars = body.querySelector(".proj-bars");
-        if (newBars) newBars.scrollTop = prevScroll;
-      }
-      if (prevDonutScroll > 0) {
-        const newList = body.querySelector(".proj-donut-list");
-        if (newList) newList.scrollTop = prevDonutScroll;
-      }
-      applyHighlight(null);
-    };
-    const render = () => {
-      if (!host) return;
-      const isProjectDim = state.dimension === "project";
-      host.hidden = !isProjectDim;
-      if (!isProjectDim) return;
-      const titleEl = $("project-detail-title");
-      if (titleEl) titleEl.textContent = w("\u9879\u76EE\u5185\u4F1A\u8BDD\u5206\u5E03", "Project Conversations");
-      syncPicker();
-      const summaryEl = $("project-detail-summary");
-      const bodyEl = $("project-detail-body");
-      if (!summaryEl || !bodyEl) return;
-      const sig = JSON.stringify([
-        options.language.language,
-        state.selectedProjectKey,
-        state.projectDetailLoading,
-        state.projectDetailError,
-        state.projectDetail?.updatedAt || null,
-        state.projectDetail?.projectKey || null,
-        state.projectDetail?.from || null,
-        state.projectDetail?.to || null,
-        state.projectDetail?.totalTokens ?? 0,
-        state.projectDetail?.conversations.length ?? 0
-      ]);
-      if (sig === lastRenderSig) return;
-      lastRenderSig = sig;
-      if (!state.selectedProjectKey) {
-        summaryEl.textContent = w("\u6309\u9700\u52A0\u8F7D \xB7 \u9ED8\u8BA4\u4E0D\u8BA1\u7B97", "On demand \xB7 Not loaded");
-        bodyEl.replaceChildren(
-          createDomNode(
-            "div",
-            "project-detail-empty",
-            w(
-              "\u70B9\u51FB\u4E0A\u65B9\u8868\u683C\u4E2D\u7684\u4EFB\u610F\u9879\u76EE\u6216\u901A\u8FC7\u4E0B\u62C9\u6846\u9009\u62E9\u7279\u5B9A\u9879\u76EE\u540E\uFF0C\u518D\u8BA1\u7B97\u9879\u76EE\u5185\u5404\u4E2A\u4F1A\u8BDD\u7684\u4F7F\u7528\u91CF\u67F1\u5F62\u56FE\u4E0E\u73AF\u5F62\u56FE\u5360\u6BD4\u3002",
-              "Select a project from the table or dropdown above to compute per-conversation bar and donut share charts on demand."
-            )
-          )
-        );
-        return;
-      }
-      if (state.projectDetailLoading) {
-        summaryEl.textContent = w("\u6B63\u5728\u52A0\u8F7D\u4F1A\u8BDD\u660E\u7EC6\u2026", "Loading sessions\u2026");
-        bodyEl.replaceChildren(
-          createDomNode(
-            "div",
-            "project-detail-empty",
-            w("\u6B63\u5728\u6309\u9700\u8BFB\u53D6\u8BE5\u9879\u76EE\u7684\u4F1A\u8BDD\u7528\u91CF\u2026", "Calculating conversation usage for selected project\u2026")
-          )
-        );
-        return;
-      }
-      if (state.projectDetailError) {
-        summaryEl.textContent = w("\u52A0\u8F7D\u5931\u8D25", "Load failed");
-        bodyEl.replaceChildren(createDomNode("div", "project-detail-empty", state.projectDetailError));
-        return;
-      }
-      const detail = state.projectDetail;
-      if (detail) {
-        const identity = `${detail.projectKey}|${detail.from}|${detail.to}|${detail.updatedAt}`;
-        if (identity !== lastDetailIdentity) {
-          lastDetailIdentity = identity;
-          expandAllSubagents = false;
-          showAllMain = false;
-          expandedMainIds.clear();
-          renderedGroups = buildMergedGroups(detail.conversations, detail.totalTokens);
-        }
-        const totalAll = detail.conversations.length;
-        const totalMain = renderedGroups.length;
-        const rangeLabel = detail.from === detail.to ? detail.from : `${detail.from}..${detail.to}`;
-        summaryEl.textContent = totalAll > totalMain ? w(
-          `${detail.projectName} \xB7 ${rangeLabel} \xB7 ${totalMain} \u4E2A\u4E3B\u4F1A\u8BDD\uFF08\u5171 ${totalAll} \u542B\u5B50\u4EE3\u7406\uFF09 \xB7 ${compactNum(detail.totalTokens)} Token`,
-          `${detail.projectName} \xB7 ${rangeLabel} \xB7 ${totalMain} main (${totalAll} total) \xB7 ${compactNum(detail.totalTokens)} Token`
-        ) : w(
-          `${detail.projectName} \xB7 ${rangeLabel} \xB7 ${totalMain} \u4E2A\u4F1A\u8BDD \xB7 ${compactNum(detail.totalTokens)} Token`,
-          `${detail.projectName} \xB7 ${rangeLabel} \xB7 ${totalMain} sessions \xB7 ${compactNum(detail.totalTokens)} Token`
-        );
-        renderLoaded(bodyEl);
-      }
-    };
-    return {
-      render,
-      syncPicker,
-      closePicker: (restore) => picker?.close(restore),
-      isPickerOpen: () => Boolean(picker?.isOpen()),
-      positionPicker: () => picker?.position(),
-      dispose: () => picker?.dispose()
-    };
-  }
-
-  // src/ui/usage-modal/breakdown-table.ts
-  function renderChartSummaryAndTable(ctx, dayIndex, palette, chartSummary, getQuery, onSelectProject) {
-    const { $, view, state, w, full, compactNum } = ctx;
-    if (!state.value || !state.currentBuckets.length) return;
-    const resetBtn = $("reset-drilldown");
-    if (resetBtn) {
-      resetBtn.hidden = !state.selectedBar;
-      resetBtn.textContent = w("\u663E\u793A\u5168\u90E8\u65F6\u6BB5", "Show all");
-    }
-    const query = getQuery();
-    const activeTotals = state.selectedBar ? dayIndex.totals(state.selectedBar.from, state.selectedBar.to, query, true) : dayIndex.totals(state.currentBuckets[0].from, state.currentBuckets.at(-1).to, query, true);
-    const rangeLabelStr = state.selectedBar ? state.selectedBar.from === state.selectedBar.to ? state.selectedBar.from : `${state.selectedBar.from} \u2013 ${state.selectedBar.to}` : "";
-    chartSummary.replaceChildren(
-      createDomNode("strong", "", `${compactNum(activeTotals.total)} Token`),
-      document.createTextNode(
-        ` \xB7 ${w(`${full(activeTotals.requests)} \u6B21\u8BF7\u6C42`, `${full(activeTotals.requests)} requests`)}${rangeLabelStr ? ` \xB7 ${rangeLabelStr}` : ""}`
-      )
-    );
-    const focusedGroup = view.activeElement?.closest?.("tr.model-group-row")?.dataset.modelGroup || null;
-    const bodyFrag = document.createDocumentFragment();
-    const tableHead = $("table-head");
-    const tableBody = $("table-body");
-    if (!tableHead || !tableBody) return;
-    if (state.dimension === "project") {
-      tableHead.replaceChildren(
-        ...[
-          w("\u9879\u76EE", "Project"),
-          w("\u603B Token", "Total tokens"),
-          w("\u5360\u6BD4", "Share"),
-          w("\u4F1A\u8BDD\u6570", "Sessions"),
-          w("\u8BF7\u6C42\u6B21\u6570", "Requests"),
-          w("\u6765\u6E90 / \u8BE6\u60C5", "Type / Detail")
-        ].map((label) => createDomNode("th", "", label))
-      );
-      if (state.projectLoading && !state.projectOverview) {
-        const tr = createDomNode("tr");
-        const td = createDomNode("td", "muted", w("\u6B63\u5728\u7EDF\u8BA1\u9879\u76EE\u7528\u91CF\u2026", "Loading project statistics\u2026"));
-        td.colSpan = 6;
-        td.style.textAlign = "center";
-        tr.append(td);
-        bodyFrag.append(tr);
-      } else if (state.projectError) {
-        const tr = createDomNode("tr");
-        const td = createDomNode("td", "muted", state.projectError);
-        td.colSpan = 6;
-        td.style.textAlign = "center";
-        tr.append(td);
-        bodyFrag.append(tr);
-      } else {
-        const metaByKey = new Map((state.projectOverview?.projects || []).map((p) => [p.projectKey, p]));
-        const activeFrom = state.selectedBar?.from || state.currentBuckets[0]?.from || "";
-        const activeTo = state.selectedBar?.to || state.currentBuckets.at(-1)?.to || "";
-        const overviewMatchesActiveRange = Boolean(
-          !state.selectedBar || state.projectOverview && state.projectOverview.from === activeFrom && state.projectOverview.to === activeTo
-        );
-        const rows = Object.entries(activeTotals.projects || {}).sort((a, b) => b[1].total - a[1].total);
-        const kindLabel = (kind) => kind === "conversations" ? w("\u72EC\u7ACB\u4F1A\u8BDD", "conversations") : kind === "cli" ? "cli" : kind === "remote" ? w("\u8FDC\u7A0B\u9879\u76EE", "Remote") : w("\u5DE5\u4F5C\u533A", "Workspace");
-        for (const [pKey, r] of rows) {
-          const meta = metaByKey.get(pKey);
-          const row = createDomNode(
-            "tr",
-            `project-row${state.selectedProjectKey === pKey ? " is-selected" : ""}`
-          );
-          row.tabIndex = 0;
-          row.setAttribute("role", "button");
-          row.setAttribute("aria-pressed", String(state.selectedProjectKey === pKey));
-          row.dataset.projectKey = pKey;
-          const handleSelect = () => onSelectProject?.(pKey);
-          row.addEventListener("click", handleSelect);
-          row.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              handleSelect();
-            }
-          });
-          const label = createDomNode("td");
-          const dot = createDomNode("span", "dot");
-          dot.style.setProperty("--model-color", palette.projectColor(pKey));
-          label.append(dot, document.createTextNode(meta?.name || pKey));
-          const share = activeTotals.total ? `${(r.total / activeTotals.total * 100).toFixed(1)}%` : "0%";
-          const actionTd = createDomNode("td");
-          actionTd.append(
-            createDomNode("span", "project-kind-badge", kindLabel(meta?.kind)),
-            document.createTextNode(" "),
-            createDomNode(
-              "span",
-              "project-open-cue",
-              state.selectedProjectKey === pKey ? w("\u5DF2\u9009\u4E2D", "Selected") : w("\u67E5\u770B\u8BE6\u60C5 \u25B8", "Inspect \u25B8")
-            )
-          );
-          const detailMatchesActiveRange = Boolean(
-            state.projectDetail && state.projectDetail.projectKey === pKey && state.projectDetail.from === activeFrom && state.projectDetail.to === activeTo
-          );
-          const convTd = createDomNode(
-            "td",
-            overviewMatchesActiveRange || detailMatchesActiveRange ? "" : "muted",
-            overviewMatchesActiveRange ? full(meta?.conversationCount ?? 0) : detailMatchesActiveRange ? full(state.projectDetail.conversations.length) : "\u2014"
-          );
-          if (!overviewMatchesActiveRange && !detailMatchesActiveRange) {
-            convTd.title = w(
-              "\u4E0B\u94BB\u65F6\u6BB5\u9700\u70B9\u51FB\u67E5\u770B\u8BE6\u60C5\u4EE5\u7EDF\u8BA1\u8BE5\u65F6\u6BB5\u7CBE\u786E\u4F1A\u8BDD\u6570",
-              "Inspect project to load exact session count for this drill-down range"
-            );
-          }
-          row.append(
-            label,
-            createDomNode("td", "", full(r.total)),
-            createDomNode("td", "", share),
-            convTd,
-            createDomNode("td", "", full(r.requests)),
-            actionTd
-          );
-          bodyFrag.append(row);
-        }
-      }
-    } else if (state.dimension === "user") {
-      tableHead.replaceChildren(
-        ...[
-          w("\u7528\u6237 / \u8D26\u53F7", "User / Account"),
-          w("\u603B Token", "Total tokens"),
-          w("\u5360\u6BD4", "Share"),
-          w("\u672A\u7F13\u5B58\u8F93\u5165", "Uncached input"),
-          w("\u7F13\u5B58\u8BFB\u53D6", "Cache read"),
-          w("\u8F93\u51FA", "Output"),
-          w("\u8BF7\u6C42\u6B21\u6570", "Requests")
-        ].map((label) => createDomNode("th", "", label))
-      );
-      for (const [u, r] of Object.entries(activeTotals.users).sort((a, b) => b[1].total - a[1].total)) {
-        const row = createDomNode("tr");
-        const label = createDomNode("td");
-        const dot = createDomNode("span", "dot");
-        dot.style.setProperty("--model-color", palette.userColor(u));
-        if (u === "legacy") dot.classList.add("legacy");
-        label.append(dot, document.createTextNode(palette.userDisplayName(u, state.value, w)));
-        const share = activeTotals.total ? `${(r.total / activeTotals.total * 100).toFixed(1)}%` : "0%";
-        row.append(
-          label,
-          createDomNode("td", "", full(r.total)),
-          createDomNode("td", "", share),
-          createDomNode("td", "", full(r.uncached)),
-          createDomNode("td", "", full(r.cacheRead)),
-          createDomNode("td", "", full(r.output)),
-          createDomNode("td", "", full(r.requests))
-        );
-        bodyFrag.append(row);
-      }
-    } else if (state.modelViewMode === "detailed") {
-      tableHead.replaceChildren(
-        ...[
-          w("\u6A21\u578B", "Model"),
-          w("\u603B Token", "Total tokens"),
-          w("\u672A\u7F13\u5B58\u8F93\u5165", "Uncached input"),
-          w("\u7F13\u5B58\u8BFB\u53D6", "Cache read"),
-          w("\u7F13\u5B58\u5199\u5165", "Cache write"),
-          w("\u8F93\u51FA", "Output")
-        ].map((label) => createDomNode("th", "", label))
-      );
-      for (const [model, r] of Object.entries(activeTotals.models).sort((a, b) => b[1].total - a[1].total)) {
-        const row = createDomNode("tr");
-        const label = createDomNode("td");
-        const dot = createDomNode("span", "dot");
-        dot.style.setProperty("--model-color", palette.modelColor(model, state.modelViewMode));
-        label.append(dot, document.createTextNode(formatModelName(model)));
-        row.append(
-          label,
-          ...[r.total, r.uncached, r.cacheRead, r.cacheWrite, r.output].map((n) => createDomNode("td", "", full(n)))
-        );
-        bodyFrag.append(row);
-      }
-    } else {
-      tableHead.replaceChildren(
-        ...[
-          w("\u6A21\u578B", "Model"),
-          w("\u603B Token", "Total tokens"),
-          w("\u672A\u7F13\u5B58\u8F93\u5165", "Uncached input"),
-          w("\u7F13\u5B58\u8BFB\u53D6", "Cache read"),
-          w("\u7F13\u5B58\u5199\u5165", "Cache write"),
-          w("\u8F93\u51FA", "Output")
-        ].map((label) => createDomNode("th", "", label))
-      );
-      for (const [groupKey, r] of Object.entries(activeTotals.models).sort((a, b) => b[1].total - a[1].total)) {
-        const variants = Object.entries(activeTotals.modelVariants?.[groupKey] || {}).sort(
-          (a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0])
-        );
-        const isExpanded = state.expandedModelGroups.has(groupKey);
-        const row = createDomNode("tr", "model-group-row");
-        row.tabIndex = 0;
-        row.setAttribute("role", "button");
-        row.setAttribute("aria-expanded", String(isExpanded));
-        row.dataset.modelGroup = groupKey;
-        const toggle = () => {
-          if (state.expandedModelGroups.has(groupKey)) state.expandedModelGroups.delete(groupKey);
-          else state.expandedModelGroups.add(groupKey);
-          renderChartSummaryAndTable(ctx, dayIndex, palette, chartSummary, getQuery);
-        };
-        row.addEventListener("click", toggle);
-        row.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            toggle();
-          }
-        });
-        const label = createDomNode("td");
-        const dot = createDomNode("span", "dot");
-        dot.style.setProperty("--model-color", palette.modelColor(groupKey, state.modelViewMode));
-        const countText = w(
-          `${variants.length} \u4E2A\u540E\u7F00`,
-          `${variants.length} ${variants.length === 1 ? "variant" : "variants"}`
-        );
-        const chevron = createDomNode("span", "model-group-chevron", isExpanded ? "\u25BE" : "\u25B8");
-        chevron.setAttribute("aria-hidden", "true");
-        label.append(
-          dot,
-          createDomNode("span", "model-group-name", groupKey),
-          createDomNode("span", "model-variant-count", countText),
-          chevron
-        );
-        row.append(
-          label,
-          ...[r.total, r.uncached, r.cacheRead, r.cacheWrite, r.output].map((n) => createDomNode("td", "", full(n)))
-        );
-        bodyFrag.append(row);
-        if (isExpanded) {
-          for (const [rawModel, vr] of variants) {
-            const vRow = createDomNode("tr", "model-variant-row");
-            const vLabel = createDomNode("td");
-            const branch = createDomNode("span", "variant-branch", "\u2514");
-            branch.setAttribute("aria-hidden", "true");
-            const share = r.total ? `${(vr.total / r.total * 100).toFixed(1)}%` : "0%";
-            vLabel.append(
-              branch,
-              createDomNode("span", "variant-name", variantLabel(rawModel, groupKey)),
-              createDomNode("span", "variant-share", share)
-            );
-            vRow.append(
-              vLabel,
-              ...[vr.total, vr.uncached, vr.cacheRead, vr.cacheWrite, vr.output].map((n) => createDomNode("td", "", full(n)))
-            );
-            bodyFrag.append(vRow);
-          }
-        }
-      }
-    }
-    tableBody.replaceChildren(bodyFrag);
-    if (focusedGroup) {
-      for (const tr of tableBody.querySelectorAll("tr.model-group-row")) {
-        if (tr.dataset.modelGroup === focusedGroup) {
-          tr.focus({ preventScroll: true });
-          break;
-        }
-      }
-    }
-  }
-
-  // src/ui/usage-modal/stacked-bar.ts
-  function createStackedBarController(ctx, dayIndex, palette, tooltip, getQuery, handlers = {}) {
-    const { $, view, state, root, text, w, compactNum } = ctx;
-    const chartSummary = createDomNode("div", "chart-summary");
-    const resetDrilldown = createDomNode("button", "reset-drilldown", w("\u663E\u793A\u5168\u90E8\u65F6\u6BB5", "Show all"));
-    resetDrilldown.id = "reset-drilldown";
-    resetDrilldown.hidden = true;
-    $("detail-summary-row")?.append(chartSummary, resetDrilldown);
-    const updateDrilldownView = () => {
-      for (const col of $("plot")?.querySelectorAll(".bar-column") || []) {
-        const active = Boolean(
-          state.selectedBar && col.dataset.from === state.selectedBar.from && col.dataset.to === state.selectedBar.to
-        );
-        col.classList.toggle("selected", active);
-        col.setAttribute("aria-pressed", String(active));
-      }
-      renderChartSummaryAndTable(ctx, dayIndex, palette, chartSummary, getQuery, handlers.onSelectProject);
-      if (state.dimension === "project") {
-        handlers.onProjectDrilldown?.();
-        handlers.onRenderProjectDetail?.();
-      } else renderHourlySpline(ctx, dayIndex, tooltip);
-    };
-    resetDrilldown.addEventListener("click", () => {
-      state.selectedBar = null;
-      updateDrilldownView();
-    });
-    const renderChart = () => {
-      if (!state.value || !state.anchor) return;
-      palette.sync(state.value, state.modelViewMode, root.host);
-      tooltip.hide();
-      if (state.period === "custom") {
-        state.customStart ||= addDays(state.value.today, -14);
-        state.customEnd ||= state.value.today;
-      }
-      const query = getQuery();
-      const { buckets, rangeLabel } = dayIndex.buildPeriodBuckets(
-        state.period,
-        state.anchor,
-        state.customStart,
-        state.customEnd,
-        query
-      );
-      text("range-label", rangeLabel);
-      state.currentBuckets = buckets;
-      if (state.dimension === "project" && buckets.length) {
-        handlers.onProjectRange?.(buckets[0].from, buckets.at(-1).to);
-      }
-      const plotEl = $("plot");
-      const chartEl = view.querySelector(".chart");
-      const wrapEl = view.querySelector(".chart-wrap");
-      if (buckets.length > 31) {
-        if (plotEl) plotEl.style.minWidth = `${buckets.length * 24}px`;
-        if (chartEl) chartEl.style.minWidth = `${buckets.length * 24 + 60}px`;
-        if (wrapEl) wrapEl.style.scrollBehavior = "smooth";
-      } else {
-        if (plotEl) plotEl.style.minWidth = "";
-        if (chartEl) chartEl.style.minWidth = "";
-        if (wrapEl) wrapEl.style.scrollBehavior = "";
-      }
-      const customControls = $("custom-range-controls");
-      if (customControls) customControls.hidden = state.period !== "custom";
-      const rangeEl = view.querySelector(".range");
-      if (rangeEl) rangeEl.hidden = state.period === "custom";
-      const startInput = $("custom-start");
-      const endInput = $("custom-end");
-      if (startInput) {
-        startInput.value = state.customStart;
-        startInput.max = state.value.today;
-      }
-      if (endInput) {
-        endInput.value = state.customEnd;
-        endInput.max = state.value.today;
-      }
-      const prevBtn = $("previous");
-      const nextBtn = $("next");
-      if (prevBtn) prevBtn.disabled = state.period === "custom";
-      if (nextBtn) {
-        nextBtn.disabled = state.period === "custom" ? true : state.period === "week" ? startOfWeek(state.anchor) >= startOfWeek(state.value.today) : state.anchor.slice(0, 7) >= state.value.today.slice(0, 7);
-      }
-      const mvPicker = $("model-view-picker");
-      if (mvPicker) mvPicker.hidden = state.dimension !== "model";
-      const scopeNote = $("project-scope-note");
-      if (scopeNote) {
-        scopeNote.hidden = state.dimension !== "project";
-        const viewScope = state.value?.viewScope;
-        const activeAccount = state.value?.activeAccount;
-        if (viewScope === "all") {
-          scopeNote.textContent = w(
-            "\u6C47\u603B\u5168\u90E8\u5DF2\u8BB0\u5F55\u8D26\u53F7 \xB7 \u4F9D\u8D56\u672C\u673A\u4FDD\u7559\u7684\u9879\u76EE\u5143\u6570\u636E",
-            "Aggregated across recorded accounts \xB7 uses locally available project metadata"
-          );
-        } else if (viewScope && activeAccount && viewScope !== activeAccount) {
-          scopeNote.textContent = w(
-            "\u4EC5\u7EDF\u8BA1\u6240\u9009\u8D26\u53F7\u5728\u672C\u673A\u4FDD\u7559\u9879\u76EE\u4FE1\u606F\u7684\u5BF9\u8BDD",
-            "Shows selected account projects with locally available metadata"
-          );
-        } else {
-          scopeNote.textContent = w(
-            "\u7EDF\u8BA1\u5F53\u524D\u8D26\u53F7\u53EF\u89C1\u9879\u76EE\uFF08\u542B\u672C\u673A\u7F13\u5B58\u5143\u6570\u636E\uFF09",
-            "Shows projects visible to the current account"
-          );
-        }
-      }
-      const hourlySec = $("hourly-section");
-      if (hourlySec) hourlySec.hidden = state.dimension === "project";
-      const projectSec = $("project-detail-section");
-      if (projectSec) projectSec.hidden = state.dimension !== "project";
-      handlers.onSyncPickers?.();
-      const allRangeTotals = dayIndex.totals(buckets[0].from, buckets.at(-1).to, query, false);
-      const legendFrag = document.createDocumentFragment();
-      const modelKeys = state.dimension !== "model" ? [] : [.../* @__PURE__ */ new Set([...(state.value.models || []).map((m) => effectiveModelKey(m, state.modelViewMode)), ...Object.keys(allRangeTotals.models)])];
-      if (state.dimension === "project") {
-        const projList = (state.projectOverview?.projects || []).filter(
-          (p) => (allRangeTotals.projects?.[p.projectKey]?.total ?? 0) > 0 || p.total > 0
-        );
-        for (const p of projList) {
-          const button = createDomNode("button");
-          const dot = createDomNode("i", "dot");
-          dot.style.setProperty("--model-color", palette.projectColor(p.projectKey));
-          button.append(dot, document.createTextNode(p.name));
-          button.type = "button";
-          button.setAttribute("aria-pressed", String(!state.disabledProjects.has(p.projectKey)));
-          button.addEventListener("click", () => {
-            if (state.disabledProjects.has(p.projectKey)) state.disabledProjects.delete(p.projectKey);
-            else state.disabledProjects.add(p.projectKey);
-            renderChart();
-          });
-          button.addEventListener(
-            "pointerenter",
-            () => tooltip.highlightItem(state.disabledProjects.has(p.projectKey) ? null : p.projectKey)
-          );
-          button.addEventListener("pointerleave", () => tooltip.highlightItem(null));
-          legendFrag.append(button);
-        }
-      } else if (state.dimension === "user") {
-        const activeUserSet = new Set(Object.keys(allRangeTotals.users).filter((u) => allRangeTotals.users[u].total > 0));
-        for (const u of (state.value.users || []).filter((user) => activeUserSet.has(user))) {
-          const button = createDomNode("button");
-          const dot = createDomNode("i", "dot");
-          dot.style.setProperty("--model-color", palette.userColor(u));
-          if (u === "legacy") dot.classList.add("legacy");
-          button.append(dot, document.createTextNode(palette.userDisplayName(u, state.value, w)));
-          button.type = "button";
-          button.setAttribute("aria-pressed", String(!state.disabledUsers.has(u)));
-          button.addEventListener("click", () => {
-            if (state.disabledUsers.has(u)) state.disabledUsers.delete(u);
-            else state.disabledUsers.add(u);
-            renderChart();
-          });
-          button.addEventListener("pointerenter", () => tooltip.highlightItem(state.disabledUsers.has(u) ? null : u));
-          button.addEventListener("pointerleave", () => tooltip.highlightItem(null));
-          legendFrag.append(button);
-        }
-      } else {
-        const activeModelSet = new Set(Object.keys(allRangeTotals.models).filter((m) => allRangeTotals.models[m].total > 0));
-        const inRangeModels = modelKeys.filter((m) => activeModelSet.has(m));
-        const otherModels = modelKeys.filter((m) => !activeModelSet.has(m));
-        const makeModelBtn = (model) => {
-          const button = createDomNode("button");
-          const dot = createDomNode("i", "dot");
-          dot.style.setProperty("--model-color", palette.modelColor(model, state.modelViewMode));
-          button.append(dot, document.createTextNode(modelLabel(model, state.modelViewMode)));
-          button.type = "button";
-          button.setAttribute("aria-pressed", String(!state.disabledModels.has(model)));
-          button.addEventListener("click", () => {
-            if (state.disabledModels.has(model)) state.disabledModels.delete(model);
-            else state.disabledModels.add(model);
-            renderChart();
-          });
-          button.addEventListener("pointerenter", () => tooltip.highlightItem(state.disabledModels.has(model) ? null : model));
-          button.addEventListener("pointerleave", () => tooltip.highlightItem(null));
-          return button;
-        };
-        for (const model of inRangeModels) legendFrag.append(makeModelBtn(model));
-        if (otherModels.length > 0) {
-          const toggleBtn = createDomNode("button", "toggle-all-models");
-          toggleBtn.id = "toggle-all-models";
-          toggleBtn.type = "button";
-          const updateToggleLabel = (btn) => {
-            btn.textContent = state.showAllModels ? w("\u6536\u8D77\u5386\u53F2\u6A21\u578B \u25B2", "Collapse historical models \u25B2") : w(`\u66F4\u591A\u5386\u53F2\u6A21\u578B (${otherModels.length}) \u25BC`, `More historical models (${otherModels.length}) \u25BC`);
-            btn.setAttribute("aria-expanded", String(state.showAllModels));
-          };
-          updateToggleLabel(toggleBtn);
-          const otherContainer = createDomNode("div", "other-models");
-          otherContainer.hidden = !state.showAllModels;
-          toggleBtn.addEventListener("click", () => {
-            state.showAllModels = !state.showAllModels;
-            updateToggleLabel(toggleBtn);
-            otherContainer.hidden = !state.showAllModels;
-          });
-          for (const model of otherModels) otherContainer.append(makeModelBtn(model));
-          legendFrag.append(toggleBtn, otherContainer);
-        }
-      }
-      $("legend")?.replaceChildren(legendFrag);
-      const max = Math.max(1, ...buckets.map((b) => b.total));
-      const mag = 10 ** Math.floor(Math.log10(max));
-      const ceiling = max > 1 ? Math.ceil(max / mag) * mag : 1;
-      const axisFrag = document.createDocumentFragment();
-      const plotFrag = document.createDocumentFragment();
-      for (let i = 0; i <= 4; i++) {
-        const bottom = `${19 + (246 - 19) * i / 4}px`;
-        const label = createDomNode("span", "", compactNum(ceiling * i / 4));
-        label.style.bottom = bottom;
-        axisFrag.append(label);
-        const line = createDomNode("i", "grid-line");
-        line.style.bottom = bottom;
-        plotFrag.append(line);
-      }
-      for (const [i, bucket] of buckets.entries()) {
-        const button = createDomNode("button", "bar-column");
-        button.type = "button";
-        button.dataset.from = bucket.from;
-        button.dataset.to = bucket.to;
-        const isDrilled = Boolean(state.selectedBar && state.selectedBar.from === bucket.from && state.selectedBar.to === bucket.to);
-        if (isDrilled) button.classList.add("selected");
-        button.setAttribute("aria-pressed", String(isDrilled));
-        const stack = createDomNode("div", "stack");
-        if (state.dimension === "project") {
-          const projEntries = Object.entries(bucket.projects || {}).filter(([pKey, b]) => b.total > 0 && !state.disabledProjects.has(pKey)).sort((a, b) => b[1].total - a[1].total);
-          for (const [j, [pKey, b]] of projEntries.entries()) {
-            const height = b.total / ceiling * 227;
-            const bar = createDomNode("i", "bar-segment");
-            bar.dataset.project = pKey;
-            bar.setAttribute("aria-hidden", "true");
-            bar.style.setProperty("--model-color", palette.projectColor(pKey));
-            bar.style.height = `${height}px`;
-            if (j && height >= 3) bar.style.boxShadow = "inset 0 -1px 0 color-mix(in srgb,var(--pulse-background) 48%,transparent)";
-            stack.append(bar);
-          }
-        } else if (state.dimension === "user") {
-          const segments = (state.value.users || []).filter((u) => bucket.users[u]?.total > 0 && !state.disabledUsers.has(u));
-          for (const [j, u] of segments.entries()) {
-            const height = bucket.users[u].total / ceiling * 227;
-            const bar = createDomNode("i", "bar-segment");
-            bar.dataset.user = u;
-            bar.setAttribute("aria-hidden", "true");
-            bar.style.setProperty("--model-color", palette.userColor(u));
-            if (u === "legacy") bar.classList.add("legacy");
-            bar.style.height = `${height}px`;
-            if (j && height >= 3) bar.style.boxShadow = "inset 0 -1px 0 color-mix(in srgb,var(--pulse-background) 48%,transparent)";
-            stack.append(bar);
-          }
-        } else {
-          const segments = modelKeys.filter((model) => bucket.models[model]?.total > 0 && !state.disabledModels.has(model));
-          for (const [j, model] of segments.entries()) {
-            const height = bucket.models[model].total / ceiling * 227;
-            const bar = createDomNode("i", "bar-segment");
-            bar.dataset.model = model;
-            bar.setAttribute("aria-hidden", "true");
-            bar.style.setProperty("--model-color", palette.modelColor(model, state.modelViewMode));
-            bar.style.height = `${height}px`;
-            if (j && height >= 3) bar.style.boxShadow = "inset 0 -1px 0 color-mix(in srgb,var(--pulse-background) 48%,transparent)";
-            stack.append(bar);
-          }
-        }
-        if (!bucket.total) stack.append(createDomNode("i", "empty-bar"));
-        button.append(stack);
-        const showX = state.period === "day" ? buckets.length <= 31 || i % 3 === 0 || i === buckets.length - 1 : state.period === "custom" ? buckets.length > 31 ? i % Math.ceil(buckets.length / 15) === 0 || i === buckets.length - 1 : true : true;
-        if (showX) {
-          const xTxt = state.period === "day" ? buckets.length <= 31 && /^\d{4}-\d{2}-\d{2}$/.test(bucket.from) ? String(Number(bucket.from.slice(8))) : String(i + 1) : state.period === "week" ? bucket.from.slice(5) : state.period === "month" ? bucket.from.slice(0, 7) : bucket.from.slice(5);
-          button.append(createDomNode("span", "x-label", xTxt));
-        }
-        tooltip.bindBucket(button, bucket, (picked) => {
-          state.selected = picked;
-          state.anchor = picked.from;
-        });
-        button.addEventListener("click", (event) => {
-          event.stopPropagation();
-          state.selectedBar = state.selectedBar && state.selectedBar.from === bucket.from && state.selectedBar.to === bucket.to ? null : bucket;
-          updateDrilldownView();
-        });
-        plotFrag.append(button);
-      }
-      if (!buckets.some((b) => b.total)) {
-        const emptyMsg = state.dimension === "project" && state.projectLoading ? w("\u6B63\u5728\u52A0\u8F7D\u6240\u9009\u8303\u56F4\u9879\u76EE\u7528\u91CF\u2026", "Loading project statistics\u2026") : w("\u6240\u9009\u65F6\u6BB5\u6682\u65E0\u7528\u91CF\u8BB0\u5F55", "No usage recorded in this period");
-        plotFrag.append(createDomNode("div", "chart-empty", emptyMsg));
-      }
-      $("axis")?.replaceChildren(axisFrag);
-      plotEl?.replaceChildren(plotFrag);
-      renderChartSummaryAndTable(ctx, dayIndex, palette, chartSummary, getQuery, handlers.onSelectProject);
-      for (const b of view.querySelectorAll("[data-period]")) {
-        b.setAttribute("aria-pressed", String(b.dataset.period === state.period));
-      }
-      if (state.dimension === "project") handlers.onRenderProjectDetail?.();
-      else renderHourlySpline(ctx, dayIndex, tooltip);
-    };
-    return { renderChart, updateDrilldownView };
-  }
-
-  // src/ui/usage-modal/tooltip.ts
-  function createTooltipController(ctx, palette) {
-    const { $, dialog, state, w, full, compactNum } = ctx;
-    let tipTarget = null;
-    let tipItem = null;
-    const highlightItem = (item) => {
-      const plot = $("plot");
-      if (!plot) return;
-      if (item) plot.dataset.highlight = item;
-      else delete plot.dataset.highlight;
-      const attr = state.dimension === "user" ? "user" : state.dimension === "project" ? "project" : "model";
-      for (const bar of plot.querySelectorAll(".bar-segment")) {
-        if (item && bar.dataset[attr] === item) bar.dataset.highlight = "true";
-        else delete bar.dataset.highlight;
-      }
-    };
-    const hidePopoverIfOpen = (tip) => {
-      try {
-        if (typeof tip.hidePopover === "function" && tip.matches(":popover-open")) tip.hidePopover();
-      } catch {
-      }
-    };
-    const revealTip = (tip, target) => {
-      tip.hidden = false;
-      try {
-        if (tip.isConnected && typeof tip.showPopover === "function" && !tip.matches(":popover-open")) {
-          tip.showPopover();
-        }
-      } catch {
-      }
-      const anchor = target.classList?.contains("bar-column") ? target.querySelector(".stack") || target : target;
-      const rect = anchor.getBoundingClientRect();
-      const bounds = dialog.getBoundingClientRect();
-      const r = tip.getBoundingClientRect();
-      const left = Math.max(
-        bounds.left + 12,
-        Math.min(bounds.right - r.width - 12, rect.left + rect.width / 2 - r.width / 2)
-      );
-      const aboveTop = rect.top - r.height - 10;
-      const top = aboveTop >= bounds.top + 12 ? aboveTop : Math.min(bounds.bottom - r.height - 12, Math.max(bounds.top + 12, rect.bottom + 10));
-      tip.style.left = `${left}px`;
-      tip.style.top = `${top}px`;
-    };
-    const hide = () => {
-      const tip = $("tip");
-      if (tip) {
-        hidePopoverIfOpen(tip);
-        tip.hidden = true;
-      }
-      tipTarget = null;
-      tipItem = null;
-      highlightItem(null);
-    };
-    const show = (bucket, target, activeItem = null) => {
-      const tip = $("tip");
-      if (!tip) return;
-      if (!tip.hidden && tipTarget === target && tipItem === activeItem) return;
-      tipTarget = target;
-      tipItem = activeItem;
-      highlightItem(activeItem);
-      tip.replaceChildren(
-        createDomNode("div", "tip-title", bucket.from === bucket.to ? bucket.from : `${bucket.from} \u2013 ${bucket.to}`),
-        createDomNode("strong", "", `${full(bucket.total)} Token`),
-        createDomNode("div", "muted", w(`${bucket.requests} \u6B21\u8BF7\u6C42`, `${bucket.requests} requests`))
-      );
-      if (state.dimension === "project") {
-        const projName = new Map((state.projectOverview?.projects || []).map((p) => [p.projectKey, p.name]));
-        for (const [pKey, r] of Object.entries(bucket.projects || {}).sort((a, b) => b[1].total - a[1].total)) {
-          const row = createDomNode("div", `tip-model${activeItem ? activeItem === pKey ? " active" : " dimmed" : ""}`);
-          const label = createDomNode("span");
-          const dot = createDomNode("i", "dot");
-          dot.style.setProperty("--model-color", palette.projectColor(pKey));
-          label.append(dot, document.createTextNode(projName.get(pKey) || pKey));
-          const amount = createDomNode("span", "", compactNum(r.total));
-          amount.append(createDomNode("span", "model-share", bucket.total ? `${(r.total / bucket.total * 100).toFixed(1)}%` : "0%"));
-          row.append(label, amount);
-          tip.append(row);
-        }
-      } else if (state.dimension === "user") {
-        for (const [u, r] of Object.entries(bucket.users || {}).sort((a, b) => b[1].total - a[1].total)) {
-          const row = createDomNode("div", `tip-model${activeItem ? activeItem === u ? " active" : " dimmed" : ""}`);
-          const label = createDomNode("span");
-          const dot = createDomNode("i", "dot");
-          dot.style.setProperty("--model-color", palette.userColor(u));
-          if (u === "legacy") dot.classList.add("legacy");
-          label.append(dot, document.createTextNode(palette.userDisplayName(u, state.value, w)));
-          const amount = createDomNode("span", "", compactNum(r.total));
-          amount.append(createDomNode("span", "model-share", bucket.total ? `${(r.total / bucket.total * 100).toFixed(1)}%` : "0%"));
-          row.append(label, amount);
-          tip.append(row);
-        }
-      } else {
-        for (const [model, r] of Object.entries(bucket.models || {}).sort((a, b) => b[1].total - a[1].total)) {
-          const row = createDomNode("div", `tip-model${activeItem ? activeItem === model ? " active" : " dimmed" : ""}`);
-          const label = createDomNode("span");
-          const dot = createDomNode("i", "dot");
-          dot.style.setProperty("--model-color", palette.modelColor(model, state.modelViewMode));
-          label.append(dot, document.createTextNode(modelLabel(model, state.modelViewMode)));
-          const amount = createDomNode("span", "", compactNum(r.total));
-          amount.append(createDomNode("span", "model-share", bucket.total ? `${(r.total / bucket.total * 100).toFixed(1)}%` : "0%"));
-          row.append(label, amount);
-          tip.append(row);
-        }
-      }
-      revealTip(tip, target);
-    };
-    const bindBucket = (button, bucket, onSelect) => {
-      button.setAttribute("aria-label", `${bucket.from === bucket.to ? bucket.from : `${bucket.from} \u2013 ${bucket.to}`}: ${full(bucket.total)} Token`);
-      button.addEventListener("pointerenter", () => show(bucket, button));
-      button.addEventListener("pointerleave", hide);
-      button.addEventListener("focus", () => show(bucket, button));
-      button.addEventListener("blur", hide);
-      button.addEventListener("pointermove", (event) => {
-        const seg = event.target?.closest?.(".bar-segment");
-        const item = state.dimension === "user" ? seg?.dataset.user || null : state.dimension === "project" ? seg?.dataset.project || null : seg?.dataset.model || null;
-        show(bucket, button, item);
-      });
-      button.addEventListener("click", () => onSelect(bucket));
-    };
-    const showNodes = (target, nodes) => {
-      const tip = $("tip");
-      if (!tip) return;
-      tipTarget = target;
-      tipItem = null;
-      tip.replaceChildren(...nodes);
-      revealTip(tip, target);
-    };
-    return { show, showNodes, hide, highlightItem, bindBucket };
-  }
-
-  // src/ui/usage-modal/index.ts
-  function createUsageDashboard(options) {
-    const hostLabel = options.hostLabel ?? "Antigravity";
-    const state = {
-      value: null,
-      tab: "overview",
-      heatMode: "day",
-      period: "day",
-      year: null,
-      anchor: null,
-      selected: null,
-      disabledModels: /* @__PURE__ */ new Set(),
-      disabledUsers: /* @__PURE__ */ new Set(),
-      disabledProjects: /* @__PURE__ */ new Set(),
-      dimension: "model",
-      projectOverview: null,
-      projectOverviewKey: "",
-      projectLoading: false,
-      projectError: null,
-      selectedProjectKey: null,
-      projectDetail: null,
-      projectDetailKey: "",
-      projectDetailLoading: false,
-      projectDetailError: null,
-      activeConvId: null,
-      modelViewMode: "simple",
-      expandedModelGroups: /* @__PURE__ */ new Set(),
-      hourlyMode: "combined",
-      lastKey: "",
-      busy: false,
-      opener: null,
-      showAllModels: false,
-      selectedBar: null,
-      hourlyExpanded: false,
-      customStart: "",
-      customEnd: "",
-      disposed: false,
-      accountKey: null,
-      currentBuckets: [],
-      guideDismissed: Boolean(options.guideDismissed),
-      guideSaving: false,
-      guideError: false,
-      guideSignature: null,
-      lastManualSig: "",
-      lastAccQueryKey: ""
-    };
-    const { dialog, backdrop, context: ctx } = mountUsageDomShell(options, state);
-    const { $ } = ctx;
-    const palette = new UsagePalette(() => dialog);
-    const dayIndex = new UsageDayIndex();
-    const getQuery = () => ({
-      dimension: state.dimension,
-      modelViewMode: state.modelViewMode,
-      disabledModels: state.disabledModels,
-      disabledUsers: state.disabledUsers,
-      disabledProjects: state.disabledProjects
-    });
-    const tooltip = createTooltipController(ctx, palette);
-    const heatmap = createHeatmapController(ctx, dayIndex, tooltip, getQuery);
-    let events;
-    let projectDetail;
-    let projectReqEpoch = 0;
-    let projectDetailEpoch = 0;
-    const activeRangeBounds = () => {
-      if (state.selectedBar) {
-        return { from: state.selectedBar.from, to: state.selectedBar.to };
-      }
-      return {
-        from: state.currentBuckets[0]?.from || state.value?.today || "",
-        to: state.currentBuckets.at(-1)?.to || state.value?.today || ""
-      };
-    };
-    const loadProjectDetail = async (projectKey, from, to) => {
-      const scope = state.value?.viewScope || state.value?.accountKey || state.value?.activeAccount || null;
-      const reqKey = `${scope || ""}|${projectKey}|${from}|${to}`;
-      if (state.projectDetailKey === reqKey && (state.projectDetail || state.projectDetailLoading)) return;
-      const bridge = resolveUsageBridge(options);
-      if (typeof bridge?.getProjectDetail !== "function") return;
-      const myEpoch = ++projectDetailEpoch;
-      state.projectDetailKey = reqKey;
-      state.projectDetailLoading = true;
-      state.projectDetailError = null;
-      projectDetail.render();
-      try {
-        const res = await bridge.getProjectDetail({ projectKey, scope, from, to });
-        if (state.disposed || myEpoch !== projectDetailEpoch) return;
-        if (res && typeof res === "object" && "error" in res) {
-          state.projectDetail = null;
-          state.projectDetailError = res.error;
-        } else {
-          state.projectDetail = res;
-        }
-      } catch (err) {
-        if (state.disposed || myEpoch !== projectDetailEpoch) return;
-        state.projectDetail = null;
-        state.projectDetailError = err instanceof Error ? err.message : ctx.w("\u52A0\u8F7D\u5931\u8D25", "Load failed");
-      } finally {
-        if (!state.disposed && myEpoch === projectDetailEpoch) {
-          state.projectDetailLoading = false;
-          projectDetail.render();
-        }
-      }
-    };
-    const ensureProjectUsage = async (from, to) => {
-      const scope = state.value?.viewScope || state.value?.accountKey || state.value?.activeAccount || null;
-      const reqKey = `${scope || ""}|${from}|${to}`;
-      if (state.projectOverviewKey === reqKey) return;
-      const bridge = resolveUsageBridge(options);
-      if (typeof bridge?.getProjectUsage !== "function") return;
-      const myEpoch = ++projectReqEpoch;
-      state.projectOverviewKey = reqKey;
-      state.projectLoading = true;
-      state.projectError = null;
-      try {
-        const res = await bridge.getProjectUsage({ scope, from, to });
-        if (state.disposed || myEpoch !== projectReqEpoch) return;
-        if (res && typeof res === "object" && "error" in res) {
-          state.projectOverview = null;
-          state.projectOverviewKey = "";
-          dayIndex.rebuildProjects(null);
-          state.projectError = res.error;
-        } else {
-          state.projectOverview = res;
-          dayIndex.rebuildProjects(res);
-          if (state.selectedProjectKey) {
-            if (res.projects.some((p) => p.projectKey === state.selectedProjectKey)) {
-              const bounds = activeRangeBounds();
-              void loadProjectDetail(state.selectedProjectKey, bounds.from || from, bounds.to || to);
-            } else {
-              state.selectedProjectKey = null;
-              state.projectDetail = null;
-              state.projectDetailKey = "";
-            }
-          }
-        }
-      } catch (err) {
-        if (state.disposed || myEpoch !== projectReqEpoch) return;
-        state.projectOverview = null;
-        state.projectOverviewKey = "";
-        dayIndex.rebuildProjects(null);
-        state.projectError = err instanceof Error ? err.message : ctx.w("\u52A0\u8F7D\u5931\u8D25", "Load failed");
-      } finally {
-        if (!state.disposed && myEpoch === projectReqEpoch) {
-          state.projectLoading = false;
-          if (state.tab === "details" && state.dimension === "project") chart.renderChart();
-        }
-      }
-    };
-    const syncProjectDetailToActiveRange = () => {
-      if (!state.selectedProjectKey) return;
-      const { from, to } = activeRangeBounds();
-      if (from && to) void loadProjectDetail(state.selectedProjectKey, from, to);
-    };
-    const selectProject = (projectKey) => {
-      state.selectedProjectKey = projectKey;
-      state.projectDetailKey = "";
-      chart.updateDrilldownView();
-      if (state.dimension !== "project") syncProjectDetailToActiveRange();
-    };
-    projectDetail = createProjectDetailController(ctx, palette, tooltip, selectProject);
-    const chart = createStackedBarController(ctx, dayIndex, palette, tooltip, getQuery, {
-      onSyncPickers: () => events?.syncPickers(),
-      onProjectRange: (from, to) => {
-        void ensureProjectUsage(from, to);
-      },
-      onSelectProject: selectProject,
-      onRenderProjectDetail: () => projectDetail.render(),
-      onProjectDrilldown: syncProjectDetailToActiveRange
-    });
-    const manual = bindManualModal(ctx);
-    bindAccountSwitcher(ctx);
-    const focusTrap = createFocusTrap(ctx, {
-      onCloseYear: (restore) => heatmap.closeYear(restore),
-      onIsYearOpen: () => heatmap.isYearOpen(),
-      onCloseSubPopovers: () => {
-        let closed = false;
-        if (projectDetail.isPickerOpen()) {
-          projectDetail.closePicker();
-          closed = true;
-        }
-        if (events?.closeSubPopovers()) closed = true;
-        return closed;
-      },
-      onCloseManualModal: (restore) => manual.closeManualModal(restore)
-    });
-    const render = () => {
-      renderOnboardingGuide(ctx, palette);
-      const value = state.value;
-      if (!value) {
-        heatmap.closeYear(false);
-        tooltip.hide();
-        renderWaitingState(ctx);
-        return;
-      }
-      const waitEl = $("usage-waiting");
-      if (waitEl) waitEl.hidden = true;
-      palette.sync(value, state.modelViewMode, options.root.host);
-      renderHeaderAndLabels(ctx, hostLabel);
-      renderKpiCards(ctx, value);
-      void syncAccountSwitcher(ctx);
-      renderManualEntries(ctx);
-      if (state.tab === "overview") heatmap.renderHeat();
-      else chart.renderChart();
-    };
-    events = bindUsageModalEvents(ctx, options, {
-      palette,
-      dayIndex,
-      tooltip,
-      heatmap,
-      chart,
-      render
-    });
-    const contentKey = (data) => JSON.stringify([{ ...data, updatedAt: void 0 }, options.language.language, palette.themeSignature(options.root.host)]);
-    const themeObserver = new MutationObserver(() => {
-      if (!state.disposed && state.value && dialog.open) {
-        const key = contentKey(state.value);
-        if (key !== state.lastKey) {
-          state.lastKey = key;
-          render();
-        }
-      }
-    });
-    if (options.root.host) {
-      themeObserver.observe(options.root.host, { attributes: true, attributeFilter: ["data-pulse-theme", "style"] });
-    }
-    return {
-      open(data, trigger) {
-        if (!data || state.disposed) return;
-        state.accountKey = data.accountKey;
-        state.value = data;
-        state.opener = trigger ?? null;
-        state.year ||= data.today.slice(0, 4);
-        state.anchor ||= data.today;
-        state.lastKey = contentKey(data);
-        dayIndex.rebuild(data);
-        events.loadPreferencesIfNeeded();
-        render();
-        focusTrap.present();
-      },
-      update(data) {
-        if (state.disposed) return;
-        if (!data) {
-          if (!state.value) return;
-          state.value = null;
-          state.lastKey = "";
-          dayIndex.rebuild(null);
-          if (dialog.open) render();
-          return;
-        }
-        if (state.accountKey && state.accountKey !== data.accountKey || state.value?.viewScope && data.viewScope && state.value.viewScope !== data.viewScope) {
-          state.selected = null;
-          state.selectedBar = null;
-          state.disabledModels.clear();
-          state.disabledUsers.clear();
-          state.disabledProjects.clear();
-          state.expandedModelGroups.clear();
-          state.projectOverview = null;
-          state.projectOverviewKey = "";
-          dayIndex.rebuildProjects(null);
-          state.selectedProjectKey = null;
-          state.projectDetail = null;
-          state.projectDetailKey = "";
-          state.lastAccQueryKey = "";
-          state.year = data.today.slice(0, 4);
-          state.anchor = data.today;
-        }
-        state.accountKey = data.accountKey;
-        state.value = data;
-        if (!dialog.open) return;
-        const key = contentKey(data);
-        if (key === state.lastKey) return;
-        state.lastKey = key;
-        dayIndex.rebuild(data);
-        render();
-      },
-      restoreModal() {
-        if (options.displayMode === "fullpage") return;
-        if (!state.disposed && dialog.open && dialog.isConnected && !dialog.matches(":popover-open")) {
-          heatmap.closeYear(false);
-          focusTrap.present();
-        }
-      },
-      close: focusTrap.close,
-      syncGuideDismissed() {
-        if (window.__agPulseUsageGuidePreview !== true) events.dismissGuide();
-      },
-      syncPreferences(prefs) {
-        events.syncPreferences(prefs);
-      },
-      dispose() {
-        state.disposed = true;
-        themeObserver.disconnect();
-        events.dispose();
-        projectDetail.dispose();
-        heatmap.dispose();
-        focusTrap.dispose();
-        dialog.remove();
-        backdrop.remove();
-      },
-      get isOpen() {
-        return dialog.open;
-      }
-    };
-  }
-
   // src/ui/panel-webview/dom-motion.ts
   var panelMotion = /* @__PURE__ */ new WeakMap();
   var reducedMotionQuery = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
@@ -5488,19 +1675,19 @@ ${FONT_POPOVER_CSS}`;
       reducedMotionQuery?.matches || document.documentElement.classList.contains("motion-reduced") || document.body.classList.contains("motion-reduced") || document.querySelector(".widget")?.classList.contains("motion-reduced")
     );
   }
-  function clearMotionProps(el2) {
-    el2.style.maxHeight = "";
-    el2.style.height = "";
-    el2.style.opacity = "";
-    el2.style.overflow = "";
+  function clearMotionProps(el) {
+    el.style.maxHeight = "";
+    el.style.height = "";
+    el.style.opacity = "";
+    el.style.overflow = "";
   }
-  function setExpandedState(el2, expanded, animate = true, onSettled) {
-    if (!el2) {
+  function setExpandedState(el, expanded, animate = true, onSettled) {
+    if (!el) {
       onSettled?.(false);
       return;
     }
-    const prev = panelMotion.get(el2);
-    const isVisible = !el2.hidden && !(prev && !prev.expanding);
+    const prev = panelMotion.get(el);
+    const isVisible = !el.hidden && !(prev && !prev.expanding);
     if (!prev && isVisible === expanded) {
       onSettled?.(false);
       return;
@@ -5509,32 +1696,32 @@ ${FONT_POPOVER_CSS}`;
     let fromOpacity = null;
     let measuredHeight = null;
     if (prev) {
-      fromHeight = el2.getBoundingClientRect().height;
-      fromOpacity = parseFloat(getComputedStyle(el2).opacity);
-    } else if (!expanded && !el2.hidden) {
-      measuredHeight = el2.getBoundingClientRect().height;
+      fromHeight = el.getBoundingClientRect().height;
+      fromOpacity = parseFloat(getComputedStyle(el).opacity);
+    } else if (!expanded && !el.hidden) {
+      measuredHeight = el.getBoundingClientRect().height;
     }
     if (prev) {
       prev.anim.cancel();
-      clearMotionProps(el2);
-      panelMotion.delete(el2);
+      clearMotionProps(el);
+      panelMotion.delete(el);
       if (isVisible === expanded) {
-        el2.hidden = !expanded;
+        el.hidden = !expanded;
         onSettled?.(false);
         return;
       }
     }
-    if (!animate || isMotionReduced() || typeof el2.animate !== "function") {
-      el2.hidden = !expanded;
+    if (!animate || isMotionReduced() || typeof el.animate !== "function") {
+      el.hidden = !expanded;
       onSettled?.(false);
       return;
     }
-    if (el2.hidden) {
-      el2.hidden = false;
+    if (el.hidden) {
+      el.hidden = false;
     }
-    const fullHeight = measuredHeight !== null && measuredHeight > 0 ? measuredHeight : expanded ? el2.scrollHeight : fromHeight ?? el2.scrollHeight;
+    const fullHeight = measuredHeight !== null && measuredHeight > 0 ? measuredHeight : expanded ? el.scrollHeight : fromHeight ?? el.scrollHeight;
     if (fullHeight <= 0) {
-      el2.hidden = !expanded;
+      el.hidden = !expanded;
       onSettled?.(false);
       return;
     }
@@ -5542,20 +1729,20 @@ ${FONT_POPOVER_CSS}`;
     const endHeight = expanded ? fullHeight : 0;
     const startOpacity = fromOpacity !== null && Number.isFinite(fromOpacity) ? fromOpacity : expanded ? 0 : 1;
     const endOpacity = expanded ? 1 : 0;
-    el2.style.overflow = "hidden";
-    const anim = el2.animate(
+    el.style.overflow = "hidden";
+    const anim = el.animate(
       [
         { maxHeight: `${startHeight}px`, opacity: startOpacity },
         { maxHeight: `${endHeight}px`, opacity: endOpacity }
       ],
       { duration: expanded ? EXPAND_DURATION_MS : COLLAPSE_DURATION_MS, easing: MOTION_EASE, fill: "forwards" }
     );
-    panelMotion.set(el2, { anim, expanding: expanded, fullHeight });
+    panelMotion.set(el, { anim, expanding: expanded, fullHeight });
     const settle = (cancelled) => {
-      if (panelMotion.get(el2)?.anim !== anim) return;
-      panelMotion.delete(el2);
-      if (!cancelled && !expanded) el2.hidden = true;
-      clearMotionProps(el2);
+      if (panelMotion.get(el)?.anim !== anim) return;
+      panelMotion.delete(el);
+      if (!cancelled && !expanded) el.hidden = true;
+      clearMotionProps(el);
       if (!cancelled) anim.cancel();
       onSettled?.(cancelled);
     };
@@ -5581,12 +1768,12 @@ ${FONT_POPOVER_CSS}`;
   function createDomLookup() {
     const domCache = /* @__PURE__ */ new Map();
     return (id) => {
-      let el2 = domCache.get(id);
-      if (!el2 || !el2.isConnected) {
-        el2 = document.getElementById(id) ?? void 0;
-        if (el2) domCache.set(id, el2);
+      let el = domCache.get(id);
+      if (!el || !el.isConnected) {
+        el = document.getElementById(id) ?? void 0;
+        if (el) domCache.set(id, el);
       }
-      return el2 ?? null;
+      return el ?? null;
     };
   }
   function createCardSwitcher(ctx) {
@@ -5689,6 +1876,115 @@ ${FONT_POPOVER_CSS}`;
       });
     }
     return showCard;
+  }
+
+  // src/ui/shared/model-donut.ts
+  var SVG_NS2 = "http://www.w3.org/2000/svg";
+  var ROLE_COLORS = {
+    plan: "var(--pulse-accent)",
+    worker: "var(--pulse-success)",
+    subagent: "var(--pulse-warning)"
+  };
+  var PANEL_MIX_PALETTE = [
+    "var(--pulse-accent)",
+    "var(--pulse-success)",
+    "var(--pulse-warning)",
+    "#c084fc",
+    "#38bdf8",
+    "#fb7185"
+  ];
+  function metricValueOf(model, metric = "total") {
+    if (!model) return 0;
+    if (metric === "calls") return Number(model.requests) || 0;
+    if (metric === "output") return Number(model.outputTokens) || 0;
+    return Number(model.totalTokens) || 0;
+  }
+  function assignModelColors(models, palette = PANEL_MIX_PALETTE) {
+    const used = /* @__PURE__ */ new Set();
+    const map = /* @__PURE__ */ new Map();
+    models.forEach((entry, idx) => {
+      const key = typeof entry === "string" ? entry : entry.name || entry.id;
+      if (!key || map.has(key)) return;
+      const role = typeof entry === "string" ? null : entry.role ?? null;
+      const preferred = role ? ROLE_COLORS[role] : void 0;
+      let chosen;
+      if (preferred && !used.has(preferred)) {
+        chosen = preferred;
+      } else {
+        chosen = palette.find((c) => !used.has(c)) ?? palette[idx % palette.length];
+      }
+      used.add(chosen);
+      map.set(key, chosen);
+    });
+    return map;
+  }
+  function partitionModelSlices(models, options) {
+    const metric = options.metric ?? "total";
+    const sorted = [...models].sort(
+      (a, b) => metricValueOf(b, metric) - metricValueOf(a, metric) || (Number(b?.totalTokens) || 0) - (Number(a?.totalTokens) || 0) || (Number(b?.requests) || 0) - (Number(a?.requests) || 0)
+    );
+    const capped = sorted.length > options.maxVisible ? [
+      ...sorted.slice(0, options.headCount),
+      sorted.slice(options.headCount).reduce(
+        (acc, m) => ({
+          id: "__other__",
+          name: options.otherLabel,
+          role: "model",
+          requests: acc.requests + (Number(m?.requests) || 0),
+          outputTokens: acc.outputTokens + (Number(m?.outputTokens) || 0),
+          totalTokens: acc.totalTokens + (Number(m?.totalTokens) || 0)
+        }),
+        { id: "__other__", name: options.otherLabel, role: "model", requests: 0, outputTokens: 0, totalTokens: 0 }
+      )
+    ] : sorted;
+    const palette = options.palette ?? PANEL_MIX_PALETTE;
+    const colorMap = assignModelColors(capped, palette);
+    const totalMetric = capped.reduce((sum, m) => sum + Math.max(0, metricValueOf(m, metric)), 0);
+    return capped.map((m, idx) => {
+      const id = String(m?.id || m?.name || idx);
+      const name = String(m?.name || m?.id || "\u2014");
+      const val = Math.max(0, metricValueOf(m, metric));
+      const resolvedColor = id === "__other__" && options.otherColor ? options.otherColor : colorMap.get(m?.name || m?.id || name) || palette[idx % palette.length];
+      return {
+        id,
+        name,
+        role: String(m?.role || "model"),
+        requests: Number(m?.requests) || 0,
+        outputTokens: Number(m?.outputTokens) || 0,
+        totalTokens: Number(m?.totalTokens) || 0,
+        value: val,
+        share: totalMetric > 0 ? val / totalMetric : 0,
+        color: resolvedColor
+      };
+    });
+  }
+  function createDonutSegment(opts, doc = document) {
+    const circle = doc.createElementNS(SVG_NS2, "circle");
+    circle.setAttribute("class", opts.className);
+    circle.setAttribute("cx", String(opts.cx));
+    circle.setAttribute("cy", String(opts.cy));
+    circle.setAttribute("r", String(opts.r));
+    if (opts.pathLength != null) circle.setAttribute("pathLength", String(opts.pathLength));
+    circle.setAttribute("stroke-dasharray", opts.dasharray);
+    circle.setAttribute("stroke-dashoffset", opts.dashoffset);
+    circle.dataset.modelId = opts.modelId;
+    circle.style.setProperty("stroke", opts.color);
+    if (opts.tabIndex != null) circle.setAttribute("tabindex", String(opts.tabIndex));
+    if (opts.role) circle.setAttribute("role", opts.role);
+    if (opts.ariaLabel) circle.setAttribute("aria-label", opts.ariaLabel);
+    return circle;
+  }
+  function formatQuotaGroupLabel(group, fallback = "") {
+    const name = group?.name || "";
+    if (/gemini/i.test(name)) return "Gemini";
+    if (/claude|gpt/i.test(name)) return "Claude / GPT";
+    return name || fallback;
+  }
+  function selectPreferredQuotaGroup(groups, chosenId, modelName) {
+    const model = String(modelName || "").toLowerCase();
+    return groups.find((g) => g.id === chosenId) ?? groups.find(
+      (g) => /gemini/.test(model) ? /gemini/i.test(g.id) : /claude|gpt/.test(model) ? /3p|claude|gpt/i.test(g.id) : false
+    ) ?? groups[0];
   }
 
   // src/ui/panel-webview/model-mix.ts
@@ -6048,17 +2344,17 @@ ${FONT_POPOVER_CSS}`;
   }
   function renderTimelineStatus(ctx) {
     const { $, state, language } = ctx;
-    const el2 = $("timeline-status");
-    if (!el2) return;
+    const el = $("timeline-status");
+    if (!el) return;
     if (!state.timelineNoticeKey) {
-      setHidden(el2, true);
-      setText(el2, "");
-      el2.classList.remove("is-error");
+      setHidden(el, true);
+      setText(el, "");
+      el.classList.remove("is-error");
       return;
     }
-    setHidden(el2, false);
-    el2.classList.toggle("is-error", state.timelineNoticeIsError);
-    setText(el2, language.t(state.timelineNoticeKey));
+    setHidden(el, false);
+    el.classList.toggle("is-error", state.timelineNoticeIsError);
+    setText(el, language.t(state.timelineNoticeKey));
   }
   function formatDurationMs(ms) {
     if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "";
@@ -6258,8 +2554,8 @@ ${FONT_POPOVER_CSS}`;
     };
   }
   function createTimelineNodeShell() {
-    const el2 = document.createElement("div");
-    el2.className = "timeline-node";
+    const el = document.createElement("div");
+    el.className = "timeline-node";
     const row = document.createElement("div");
     row.className = "timeline-node-row";
     const bullet = document.createElement("span");
@@ -6275,9 +2571,9 @@ ${FONT_POPOVER_CSS}`;
     const badges = document.createElement("div");
     badges.className = "timeline-node-badges";
     row.append(bullet, main, badges);
-    el2.appendChild(row);
-    timelineNodeRefs.set(el2, {
-      el: el2,
+    el.appendChild(row);
+    timelineNodeRefs.set(el, {
+      el,
       row,
       toggleBtn: null,
       bullet,
@@ -6292,7 +2588,7 @@ ${FONT_POPOVER_CSS}`;
       childMap: /* @__PURE__ */ new Map(),
       lastSig: ""
     });
-    return el2;
+    return el;
   }
   function syncChip(parent, existing, text, className, title) {
     if (!text) {
@@ -6311,17 +2607,17 @@ ${FONT_POPOVER_CSS}`;
     if (title !== void 0) setAttr(chip, "title", title || null);
     return chip;
   }
-  function syncTimelineNode(ctx, el2, node, depth, lang, nodeSigs) {
-    const ref = timelineNodeRefs.get(el2);
+  function syncTimelineNode(ctx, el, node, depth, lang, nodeSigs) {
+    const ref = timelineNodeRefs.get(el);
     const fullSig = `${lang}|${nodeSigs.get(node) ?? ""}`;
     if (ref.lastSig === fullSig) return;
     ref.lastSig = fullSig;
-    setAttr(el2, "data-kind", node.kind || "step");
-    setAttr(el2, "data-node-id", node.id || "");
+    setAttr(el, "data-kind", node.kind || "step");
+    setAttr(el, "data-node-id", node.id || "");
     const meta = node.meta || {};
-    setAttr(el2, "data-step-start", meta.stepStart != null ? String(meta.stepStart) : null);
-    setAttr(el2, "data-step-end", meta.stepEnd != null ? String(meta.stepEnd) : null);
-    setAttr(el2, "data-step-index", meta.stepIndex != null ? String(meta.stepIndex) : null);
+    setAttr(el, "data-step-start", meta.stepStart != null ? String(meta.stepStart) : null);
+    setAttr(el, "data-step-end", meta.stepEnd != null ? String(meta.stepEnd) : null);
+    setAttr(el, "data-step-index", meta.stepIndex != null ? String(meta.stepIndex) : null);
     const children = Array.isArray(node.children) ? node.children : [];
     const hasChildren = children.length > 0;
     const collapsed = hasChildren && (ctx.state.timelineToggled.has(node.id) ? Boolean(ctx.state.timelineToggled.get(node.id)) : depth >= 2);
@@ -6368,7 +2664,7 @@ ${FONT_POPOVER_CSS}`;
       if (!ref.childrenEl) {
         const kidsEl = document.createElement("div");
         kidsEl.className = "timeline-children";
-        el2.appendChild(kidsEl);
+        el.appendChild(kidsEl);
         ref.childrenEl = kidsEl;
       }
       if (!panelMotion.has(ref.childrenEl)) setHidden(ref.childrenEl, collapsed);
@@ -6612,12 +2908,12 @@ ${FONT_POPOVER_CSS}`;
     cache.activeTreeRow?.classList.remove("is-active");
     cache.activeTreeRow = null;
     let targetNode = null;
-    for (const el2 of treeEl.querySelectorAll(".timeline-node")) {
-      const idx = el2.dataset.stepIndex != null ? Number(el2.dataset.stepIndex) : null;
-      const s = el2.dataset.stepStart != null ? Number(el2.dataset.stepStart) : null;
-      const e = el2.dataset.stepEnd != null ? Number(el2.dataset.stepEnd) : null;
+    for (const el of treeEl.querySelectorAll(".timeline-node")) {
+      const idx = el.dataset.stepIndex != null ? Number(el.dataset.stepIndex) : null;
+      const s = el.dataset.stepStart != null ? Number(el.dataset.stepStart) : null;
+      const e = el.dataset.stepEnd != null ? Number(el.dataset.stepEnd) : null;
       if (idx === stepStart || s != null && s === stepStart || s != null && e != null && stepStart >= s && stepStart <= e) {
-        if (!targetNode || idx === stepStart || s === stepStart) targetNode = el2;
+        if (!targetNode || idx === stepStart || s === stepStart) targetNode = el;
       }
     }
     if (!targetNode) return;
@@ -7113,7 +3409,7 @@ ${FONT_POPOVER_CSS}`;
     return { letter: ch || "?", color: "var(--pulse-accent)" };
   }
   function createSvgCircle(attrs) {
-    const circle = document.createElementNS(SVG_NS3, "circle");
+    const circle = document.createElementNS(SVG_NS2, "circle");
     for (const [k, v] of Object.entries(attrs)) {
       circle.setAttribute(k, String(v));
     }
@@ -7121,7 +3417,7 @@ ${FONT_POPOVER_CSS}`;
   }
   function createRingNode(groupId) {
     const wrap = createEl("span", { class: "quota-ring-item", "data-group-id": groupId });
-    const svg = document.createElementNS(SVG_NS3, "svg");
+    const svg = document.createElementNS(SVG_NS2, "svg");
     svg.setAttribute("class", "quota-ring-svg");
     svg.setAttribute("viewBox", "0 0 28 28");
     svg.setAttribute("aria-hidden", "true");
@@ -7524,11 +3820,11 @@ ${FONT_POPOVER_CSS}`;
           }
         }
       } else {
-        for (const el2 of popover.querySelectorAll(".quota-pop-nums[data-reset-at]")) {
-          const resetAt = el2.dataset.resetAt;
-          const pctText = el2.dataset.pct || "\u2014";
+        for (const el of popover.querySelectorAll(".quota-pop-nums[data-reset-at]")) {
+          const resetAt = el.dataset.resetAt;
+          const pctText = el.dataset.pct || "\u2014";
           if (resetAt) {
-            setText(el2, `${pctText} \xB7 ${language.countdown(resetAt, now, true)}`);
+            setText(el, `${pctText} \xB7 ${language.countdown(resetAt, now, true)}`);
           }
         }
       }
@@ -8282,18 +4578,18 @@ ${FONT_POPOVER_CSS}`;
           const preserveScroll = Boolean(container && !container.hidden);
           const savedScroll = preserveScroll && container ? container.scrollTop : 0;
           const existingNodes = /* @__PURE__ */ new Map();
-          for (const [id, el2] of nodeMap) {
-            if (el2.isConnected && list.contains(el2)) existingNodes.set(id, el2);
+          for (const [id, el] of nodeMap) {
+            if (el.isConnected && list.contains(el)) existingNodes.set(id, el);
           }
           if (existingNodes.size === 0 && list.children.length > 0) {
-            for (const el2 of list.querySelectorAll(".subagent-tree-node[data-id]")) {
-              if (el2.dataset.id) existingNodes.set(el2.dataset.id, el2);
+            for (const el of list.querySelectorAll(".subagent-tree-node[data-id]")) {
+              if (el.dataset.id) existingNodes.set(el.dataset.id, el);
             }
           }
           const nextNodes = /* @__PURE__ */ new Map();
           syncSubagentChildren(ctx, list, buildSubagentTree(items), 1, existingNodes, nextNodes);
           nodeMap.clear();
-          for (const [id, el2] of nextNodes) nodeMap.set(id, el2);
+          for (const [id, el] of nextNodes) nodeMap.set(id, el);
           if (preserveScroll && container) container.scrollTop = savedScroll;
         } else {
           nodeMap.clear();
@@ -8462,6 +4758,64 @@ ${FONT_POPOVER_CSS}`;
     let controller;
     let localUsage = null;
     let usageThemeController = null;
+    let usageFactoryPromise = null;
+    let pageDisposed = false;
+    const resolveUsageUiUrl = () => {
+      const version = document.querySelector('meta[name="ag-pulse-panel-assets"]')?.getAttribute("content");
+      return version ? `/usage-ui.js?v=${encodeURIComponent(version)}` : "/usage-ui.js";
+    };
+    const loadUsageFactory = () => {
+      const winWithUsage = panelWin;
+      if (typeof winWithUsage.__agPulseUsageFactory === "function") {
+        return Promise.resolve(winWithUsage.__agPulseUsageFactory);
+      }
+      if (usageFactoryPromise) return usageFactoryPromise;
+      usageFactoryPromise = new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-ag-pulse-usage-ui="1"]');
+        const attachTarget = document.head || document.documentElement || document.body;
+        if (!attachTarget) {
+          reject(new Error("Document unavailable for usage dashboard script"));
+          return;
+        }
+        const script = existing || document.createElement("script");
+        let settled = false;
+        const cleanup = () => {
+          script.removeEventListener("load", onLoad);
+          script.removeEventListener("error", onError);
+        };
+        const onLoad = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          const factory = winWithUsage.__agPulseUsageFactory;
+          if (typeof factory === "function") {
+            resolve(factory);
+          } else {
+            script.remove();
+            reject(new Error("Usage dashboard factory did not initialize"));
+          }
+        };
+        const onError = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          script.remove();
+          reject(new Error("Failed to load /usage-ui.js"));
+        };
+        script.addEventListener("load", onLoad);
+        script.addEventListener("error", onError);
+        if (!existing) {
+          script.dataset.agPulseUsageUi = "1";
+          script.async = true;
+          script.src = resolveUsageUiUrl();
+          attachTarget.append(script);
+        }
+      }).catch((err) => {
+        usageFactoryPromise = null;
+        throw err;
+      });
+      return usageFactoryPromise;
+    };
     const render = () => {
       const snapshot = state.snapshot;
       if (!snapshot) return;
@@ -8839,7 +5193,7 @@ ${FONT_POPOVER_CSS}`;
         }
       });
     }
-    const ensureLocalUsage = () => {
+    const ensureLocalUsage = (createUsageDashboard) => {
       if (localUsage) return localUsage;
       const usageHost = ctx.$("panel-usage-host") || document.body;
       const shadow = usageHost.shadowRoot || usageHost.attachShadow({ mode: "open" });
@@ -8918,12 +5272,19 @@ ${FONT_POPOVER_CSS}`;
             if (res?.openedInHost) return;
           } catch {
           }
-          if (!state.snapshot?.usage) {
-            await controller.refresh(true, { includeUsage: true });
-          }
-          if (!state.snapshot?.usage) return;
-          const dashboard = ensureLocalUsage();
+          const [usageFactory] = await Promise.all([
+            loadUsageFactory(),
+            state.snapshot?.usage ? Promise.resolve() : controller.refresh(true, { includeUsage: true })
+          ]);
+          if (pageDisposed || !state.snapshot?.usage) return;
+          const dashboard = ensureLocalUsage(usageFactory);
           dashboard.open(state.snapshot.usage, openUsageBtn);
+        } catch (err) {
+          const note = ctx.$("health-note");
+          if (note) {
+            setText(note, err instanceof Error ? err.message : t("panelUnavailable"));
+            note.classList.add("warning");
+          }
         } finally {
           openUsageBtn.disabled = false;
         }
@@ -8939,6 +5300,7 @@ ${FONT_POPOVER_CSS}`;
       }
     });
     window.addEventListener("pagehide", () => {
+      pageDisposed = true;
       closeQuotaPopoverNow();
       stopCountdownTimer();
       controller.stopTimers();
@@ -8955,6 +5317,7 @@ ${FONT_POPOVER_CSS}`;
     });
     window.addEventListener("pageshow", (event) => {
       if (!event.persisted) return;
+      pageDisposed = false;
       ctx.setThemeController(theme.attach(document.documentElement));
       ctx.setPreferences(controller.connectPreferences());
       document.addEventListener("pointerdown", onDocQuotaPointerDown, true);

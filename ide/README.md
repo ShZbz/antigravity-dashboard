@@ -34,7 +34,7 @@ implemented. The desktop App and CLI retain their separate installers.
 
 ## Install a downloaded VSIX
 
-Download `antigrative-dashboard-ide-0.12.7.vsix` and its `.vsix.sha256` from the
+Download `antigrative-dashboard-ide-0.12.8.vsix` and its `.vsix.sha256` from the
 [releases](https://github.com/ShZbz/antigravity-dashboard/releases).
 In Antigravity IDE, open Extensions, choose **Install from VSIX…** from the
 Extensions menu and select the file. No desktop App installation is required.
@@ -60,13 +60,13 @@ The debugger binds to localhost only; do not expose it to the network.
 
 ## Install / launch / uninstall from the source ZIP
 
-Download and extract `antigrative-dashboard-0.12.7.zip`, and download the VSIX to a
+Download and extract `antigrative-dashboard-0.12.8.zip`, and download the VSIX to a
 known location. You can run the helper with Node.js 20+ (`node ide/manage.mjs`) or
 Python 3.10+ (`python ide/manage.py`); it uses the IDE's bundled runtime and needs
 no third-party packages:
 
 ```powershell
-node ide/manage.mjs install --exe 'D:\Antigravity IDE\Antigravity IDE.exe' --vsix 'C:\Downloads\antigrative-dashboard-ide-0.12.7.vsix'
+node ide/manage.mjs install --exe 'D:\Antigravity IDE\Antigravity IDE.exe' --vsix 'C:\Downloads\antigrative-dashboard-ide-0.12.8.vsix'
 node ide/manage.mjs launch --exe 'D:\Antigravity IDE\Antigravity IDE.exe'
 node ide/manage.mjs uninstall --exe 'D:\Antigravity IDE\Antigravity IDE.exe'
 ```
@@ -116,6 +116,6 @@ signed-in IDE GUI acceptance remains outstanding.
 
 ## 中文快速说明
 
-从发布页下载 `antigrative-dashboard-ide-0.12.7.vsix`，在反重力独立 IDE 扩展页选择「从 VSIX 安装」，无需先装桌面 App。完全退出 IDE 后，用带 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1` 参数的快捷方式启动。
+从发布页下载 `antigrative-dashboard-ide-0.12.8.vsix`，在反重力独立 IDE 扩展页选择「从 VSIX 安装」，无需先装桌面 App。完全退出 IDE 后，用带 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1` 参数的快捷方式启动。
 
 窄栏显示三个图标，拉宽后显示数值；支持多模型占比环、24 小时趋势图、按模型/按用户/项目统计（含项目会话下钻与按账号隔离）、简易/详细变体归并、多账号切换、独立 `Aa` 字体缩放及远程项目手动录入。数据保存在 `User/globalStorage/shzbz.antigrative-dashboard-ide/`。若从原上游 `you-should-know-me.antigrative-dashboard-ide` 迁移，请先完整退出 IDE，将旧目录下的 `history-v1/`、`usage-v1/` 与 `preferences.json` 复制到新目录并卸载旧版扩展。

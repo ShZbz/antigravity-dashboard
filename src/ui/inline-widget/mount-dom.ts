@@ -34,6 +34,7 @@ export interface MountShadowDomOptions {
   onChooseLanguage: (next: LanguageCode) => Promise<void>;
   onFontScaleChange?: (prefs: PreferencesSnapshot) => void;
   onObserveComposer: () => void;
+  onOpenUsage?: (trigger: Element | null) => boolean | void;
 }
 
 export interface MountedShadowHandles {
@@ -155,6 +156,10 @@ export function mountWidgetShadowDom(options: MountShadowDomOptions): MountedSha
     });
     root.getElementById('open-usage')?.addEventListener('click', () => {
       const trigger = root.querySelector('[data-card=cache]') ?? null;
+      if (options.onOpenUsage) {
+        options.onOpenUsage(trigger);
+        return;
+      }
       cards.hide();
       usageDashboard?.open(polling.data?.usage, trigger);
     });
@@ -181,9 +186,10 @@ export function renderWidgetTree(params: {
   polling.syncConversation();
 
   if (usageDashboard) {
-    toggleHidden(root.getElementById('usage-entry'), !data.usage);
-    setText(root.getElementById('usage-today'), compact(data.usage?.todayTokens));
-    setText(root.getElementById('usage-month'), compact(data.usage?.monthTokens));
+    const usageSummary = data.usage ?? data.usageTotals;
+    toggleHidden(root.getElementById('usage-entry'), !usageSummary);
+    setText(root.getElementById('usage-today'), compact(usageSummary?.todayTokens));
+    setText(root.getElementById('usage-month'), compact(usageSummary?.monthTokens));
     usageDashboard.update(data.usage);
   }
   if (cards.hasOpenGroupMenu) return undefined;
@@ -230,37 +236,45 @@ function isRelevantMutation(record: MutationRecord, node: HTMLElement | null): b
   if (target === node || node?.contains(target)) return false;
   if (!node?.isConnected) return true;
   if (target.contains(node) || node.parentElement?.contains(target)) return true;
-  if (record.type === 'attributes') {
-    const attr = record.attributeName;
-    if (
-      attr === 'data-cascade-id' ||
-      attr === 'data-testid' ||
-      attr === 'hidden' ||
-      attr === 'inert' ||
-      attr === 'contenteditable'
-    ) {
-      return true;
+    if (record.type === 'attributes') {
+      const attr = record.attributeName;
+      if (
+        attr === 'data-cascade-id' ||
+        attr === 'data-testid' ||
+        attr === 'hidden' ||
+        attr === 'inert' ||
+        attr === 'contenteditable'
+      ) {
+        return true;
+      }
+      if (attr === 'style' || attr === 'class') {
+        return target.nodeType === 1 && (target as Element).matches(LAYOUT_RELEVANT_SELECTOR);
+      }
+      return isLayoutRelevantNode(target);
     }
-    return isLayoutRelevantNode(target);
+    for (const added of record.addedNodes) {
+      if (isLayoutRelevantNode(added)) return true;
+    }
+    for (const removed of record.removedNodes) {
+      if (removed === node || (removed.nodeType === 1 && (removed as Element).contains(node))) return true;
+      if (isLayoutRelevantNode(removed)) return true;
+    }
+    return false;
   }
-  for (const added of record.addedNodes) {
-    if (isLayoutRelevantNode(added)) return true;
-  }
-  for (const removed of record.removedNodes) {
-    if (removed === node || (removed.nodeType === 1 && (removed as Element).contains(node))) return true;
-    if (isLayoutRelevantNode(removed)) return true;
-  }
-  return false;
-}
 
 export function bindHostLifecycleListeners(params: {
   getNode: () => HTMLElement | null;
+  shouldTrackScroll?: () => boolean;
   scheduleLayout: () => void;
   hideCards: () => void;
 }): () => void {
-  const { getNode, scheduleLayout, hideCards } = params;
+  const { getNode, shouldTrackScroll, scheduleLayout, hideCards } = params;
   const observer = new MutationObserver((records) => {
     const node = getNode();
+    if (!node?.isConnected) {
+      if (records.length > 0) scheduleLayout();
+      return;
+    }
     if (records.some((record) => isRelevantMutation(record, node))) {
       scheduleLayout();
     }
@@ -290,16 +304,22 @@ export function bindHostLifecycleListeners(params: {
     const node = getNode();
     if (node && !e.composedPath().includes(node)) hideCards();
   };
+  const onScroll = (): void => {
+    const node = getNode();
+    if (!node?.isConnected || shouldTrackScroll?.()) {
+      scheduleLayout();
+    }
+  };
   document.addEventListener('keydown', onKey);
   document.addEventListener('pointerdown', onPointer);
   window.addEventListener('resize', scheduleLayout, { passive: true });
-  document.addEventListener('scroll', scheduleLayout, { capture: true, passive: true });
+  document.addEventListener('scroll', onScroll, { capture: true, passive: true });
 
   return () => {
     observer.disconnect();
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('pointerdown', onPointer);
-    document.removeEventListener('scroll', scheduleLayout, true);
+    document.removeEventListener('scroll', onScroll, true);
     window.removeEventListener('resize', scheduleLayout);
   };
 }

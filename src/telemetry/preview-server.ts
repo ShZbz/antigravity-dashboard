@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import type {
   AddAccountRequest,
@@ -44,6 +44,7 @@ export interface PreviewServerOptions {
   usageBridge?: PreviewUsageBridge;
   i18nModule: () => string;
   themeModule: () => string;
+  usageUiModule?: () => string;
   themeCss: () => string;
   inlineSource: () => string;
 }
@@ -85,10 +86,10 @@ async function readJsonBody(
   return body;
 }
 
-export function startPreviewServer(options: PreviewServerOptions): void {
+export function startPreviewServer(options: PreviewServerOptions): Server {
   const {
     here, port, guidPattern, staticFiles, livePreferences, store,
-    metrics, getHealth, usageBridge, i18nModule, themeModule, themeCss, inlineSource,
+    metrics, getHealth, usageBridge, i18nModule, themeModule, usageUiModule, themeCss, inlineSource,
   } = options;
   const server = createServer(async (req, res) => {
     const rawHost = req.headers.host;
@@ -176,7 +177,7 @@ export function startPreviewServer(options: PreviewServerOptions): void {
             await metrics({
               conversationId: url.searchParams.get('conversationId'),
               force: url.searchParams.get('force') === '1' || url.searchParams.get('force') === 'true',
-              includeUsage: url.searchParams.get('includeUsage') !== '0',
+              includeUsage: url.searchParams.get('includeUsage') !== '0' && url.searchParams.get('includeUsage') !== 'false',
             }),
           ),
         );
@@ -193,6 +194,12 @@ export function startPreviewServer(options: PreviewServerOptions): void {
     if (url.pathname === '/preload.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }); res.end('// Standalone preview: no host bridge.'); return; }
     if (url.pathname === '/i18n.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); res.end(i18nModule()); return; }
     if (url.pathname === '/theme.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); res.end(themeModule()); return; }
+    if (url.pathname === '/usage-ui.js') {
+      if (!usageUiModule) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8' });
+      res.end(usageUiModule());
+      return;
+    }
     if (url.pathname === '/theme.css') { res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' }); res.end(themeCss()); return; }
     if (url.pathname === '/inline-widget.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); res.end(inlineSource()); return; }
     if (url.pathname === '/app.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); res.end(panelAppSource()); return; }
@@ -203,4 +210,5 @@ export function startPreviewServer(options: PreviewServerOptions): void {
     res.end(url.pathname === '/' ? panelPageSource() : readFileSync(join(here, file[0]), 'utf8'));
   });
   server.listen(port, '127.0.0.1', () => console.log(`Antigrative Dashboard: http://127.0.0.1:${port}`));
+  return server;
 }

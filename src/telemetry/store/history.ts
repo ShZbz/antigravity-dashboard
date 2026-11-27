@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { CacheMetrics, LatestRateStatus, RateReason, SpeedMetrics, TokenCounts, TokenSummary } from '../../contracts/metrics.ts';
 import { platformPaths } from '../../platform/paths.ts';
@@ -11,6 +12,7 @@ import { safeTranscriptStats } from '../reader/transcript.ts';
 const GUID = /^(?:[a-zA-Z0-9_.-]+\/)*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE = /^[0-9a-f]{64}$/;
 const MAX_HISTORY_BYTES = 65536;
+const MAX_WRITE_CACHE_ENTRIES = 16;
 const NUMERIC_KEYS = [
   'steps', 'rounds', 'requests', 'measuredRequests', 'missingTiming', 'tps', 'latestTps',
   'streamingSeconds', 'modelSeconds', 'toolSeconds', 'ttftSeconds', 'excludedTiming', 'rateWarnings',
@@ -31,8 +33,10 @@ const isRec = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof 
 const isoOrNull = (v: unknown): string | null =>
   typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null;
 
+const sha256Hex = (value: string): string => createHash('sha256').update(value).digest('hex');
+
 export interface HistoryRecord { metrics: SpeedMetrics; savedAt: string; }
-interface HistoryWriteCacheEntry { fileStamp: string; result: HistoryRecord; metricsJson: string; }
+interface HistoryWriteCacheEntry { fileStamp: string; result: HistoryRecord; metricsHash: string; }
 interface PersistedHistoryFile { schema: number; account: string; conversationId: string; savedAt: string; metrics: unknown; }
 
 function buildTokenSummary(raw: Record<string, unknown>, counts: TokenCounts, cache: CacheMetrics, requests: number | null): TokenSummary {
@@ -256,13 +260,14 @@ export class SessionHistory {
   constructor(directory = join(platformPaths().data, 'history-v1')) { this.directory = directory; }
   async stamp(file: string): Promise<string | null | undefined> { return statStamp(file); }
 
-  rememberWrite(file: string, fileStamp: string, result: HistoryRecord, metricsJson: string): void {
+  rememberWrite(file: string, fileStamp: string, result: HistoryRecord, metricsHash: string): void {
     this.writeCache.delete(file);
-    if (this.writeCache.size >= 64) {
+    while (this.writeCache.size >= MAX_WRITE_CACHE_ENTRIES) {
       const oldest = this.writeCache.keys().next().value;
-      if (oldest !== undefined) this.writeCache.delete(oldest);
+      if (oldest === undefined) break;
+      this.writeCache.delete(oldest);
     }
-    this.writeCache.set(file, { fileStamp, result, metricsJson });
+    this.writeCache.set(file, { fileStamp, result, metricsHash });
   }
 
   file(scope: string, id: string): string {
@@ -296,11 +301,11 @@ export class SessionHistory {
     if (!usableMetrics(metrics)) return null;
     const cached = this.writeCache.get(file);
     const fileStamp = await this.stamp(file);
-    let previous: HistoryRecord | null = null, previousJson: string | null = null;
+    let previous: HistoryRecord | null = null, previousHash: string | null = null;
     if (fileStamp === null) this.writeCache.delete(file);
     else if (cached && fileStamp !== undefined && cached.fileStamp === fileStamp) {
       previous = cached.result;
-      previousJson = cached.metricsJson;
+      previousHash = cached.metricsHash;
     } else previous = await this.load(scope, id);
     if (previous && shouldKeepSaved(previous.metrics, metrics)) {
       if (!metrics.context && !(isRec(value) && Object.hasOwn(value, 'transcriptStats'))) return previous;
@@ -310,9 +315,9 @@ export class SessionHistory {
     const savedAt = new Date().toISOString();
     const payload = fitPayloadWithinLimit(scope, id.toLowerCase(), savedAt, metrics);
     if (!payload) return previous || null;
-    const metricsJson = JSON.stringify(metrics);
-    if (previous && (previousJson ?? JSON.stringify(previous.metrics)) === metricsJson) {
-      if (fileStamp) this.rememberWrite(file, fileStamp, previous, metricsJson);
+    const metricsHash = sha256Hex(JSON.stringify(metrics));
+    if (previous && (previousHash ?? sha256Hex(JSON.stringify(previous.metrics))) === metricsHash) {
+      if (fileStamp) this.rememberWrite(file, fileStamp, previous, metricsHash);
       return previous;
     }
     try {
@@ -323,7 +328,7 @@ export class SessionHistory {
     }
     const result: HistoryRecord = { metrics, savedAt };
     const nextStamp = await this.stamp(file);
-    if (nextStamp) this.rememberWrite(file, nextStamp, result, metricsJson);
+    if (nextStamp) this.rememberWrite(file, nextStamp, result, metricsHash);
     return result;
   }
 }

@@ -51,6 +51,10 @@ export class RuntimeUi {
   getProjectUsage: RuntimeUiOptions['getProjectUsage'];
   getProjectDetail: RuntimeUiOptions['getProjectDetail'];
   clearTimeline: RuntimeUiOptions['clearTimeline'];
+  now: () => number;
+  healthWriteThrottleMs: number;
+  private lastHealthWriteKey: string | null = null;
+  private lastHealthWriteAt = 0;
 
   constructor({
     snapshot,
@@ -66,6 +70,8 @@ export class RuntimeUi {
     targetOrigin = (target) => new URL(target.url ?? '').origin,
     connect = (url, options) => new CdpConnection(url, options),
     interval = 3000,
+    now = Date.now,
+    healthWriteThrottleMs = 60_000,
     addManualUsage = null,
     deleteManualUsage = null,
     getAccounts = null,
@@ -77,7 +83,7 @@ export class RuntimeUi {
     getProjectUsage = null,
     getProjectDetail = null,
     clearTimeline = null,
-  }: RuntimeUiOptions = {}) {
+  }: RuntimeUiOptions & { now?: () => number; healthWriteThrottleMs?: number } = {}) {
     this.snapshot = snapshot;
     this.source = source;
     this.profile = profile;
@@ -86,6 +92,8 @@ export class RuntimeUi {
     this.discover = discover;
     this.connect = connect;
     this.interval = interval;
+    this.now = now;
+    this.healthWriteThrottleMs = healthWriteThrottleMs;
     this.sessions = new Map();
     this.running = false;
     this.stopping = false;
@@ -131,21 +139,35 @@ export class RuntimeUi {
     };
   }
 
-  async setHealth(state: IntegrationHealthState, message: string): Promise<void> {
+  async setHealth(state: IntegrationHealthState, message: string, forceWrite = false): Promise<void> {
+    const now = this.now();
     this.health = {
       state,
       mode: 'runtime',
       message,
       windows: this.sessions.size,
-      checkedAt: new Date().toISOString(),
+      checkedAt: new Date(now).toISOString(),
     };
-    if (this.dataDir && (await this.owns())) {
-      try {
-        await mkdir(this.dataDir, { recursive: true });
-        await writeFile(join(this.dataDir, 'integration-state.json'), JSON.stringify(this.health));
-      } catch {
-        // Read-only state reporting must not crash collection.
-      }
+    if (!this.dataDir || !(await this.owns())) return;
+    const writeKey = JSON.stringify([
+      this.health.state,
+      this.health.mode,
+      this.health.message,
+      this.health.windows,
+      this.health.activePortPresent ?? null,
+      this.health.debugLaunchEnabled ?? null,
+      this.health.debugLaunchConfigured ?? null,
+    ]);
+    const changed = writeKey !== this.lastHealthWriteKey;
+    const elapsed = now - this.lastHealthWriteAt >= this.healthWriteThrottleMs;
+    if (!forceWrite && !changed && !elapsed) return;
+    try {
+      await mkdir(this.dataDir, { recursive: true });
+      await writeFile(join(this.dataDir, 'integration-state.json'), JSON.stringify(this.health));
+      this.lastHealthWriteKey = writeKey;
+      this.lastHealthWriteAt = now;
+    } catch {
+      // Read-only state reporting must not crash collection.
     }
   }
 
@@ -286,5 +308,6 @@ export class RuntimeUi {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer as number);
     await this.detachAll();
+    await this.setHealth(this.health.state, this.health.message, true);
   }
 }

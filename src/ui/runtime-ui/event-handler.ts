@@ -105,12 +105,13 @@ export async function handleCdpEvent(
     const outcome = await dispatchBindingCall(ctx, connection, input);
     if (!outcome.handled) return;
     if (ctx.stopping || !(await ctx.owns())) return;
+    const serialized = outcome.serializedResult ?? JSON.stringify(outcome.result);
     await connection.command('Runtime.evaluate', {
       expression: ctx.rendererGuard(
         'window.__agPulseRuntimeBridge?.resolve(' +
           input.id +
           ',' +
-          JSON.stringify(outcome.result) +
+          serialized +
           ')',
       ),
       contextId,

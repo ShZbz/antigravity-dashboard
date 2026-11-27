@@ -615,6 +615,7 @@ function normalizeSqliteStatus(rawStatus, summaryStatus) {
   if (/RUNNING|GENERATING|PENDING|WAITING|QUEUED/i.test(s)) return "CASCADE_RUN_STATUS_RUNNING";
   return "CASCADE_RUN_STATUS_IDLE";
 }
+var INACTIVE_IDLE_BYTES_CAP = 2 * 1024 * 1024;
 var TrajectoryReader = class {
   // Serialized statistics budget, not transcript/response size. Local resource
   // experiments cover 1K/8K/32K records; 8 MiB bounds retained objects well below
@@ -673,6 +674,12 @@ var TrajectoryReader = class {
     this.summaries = summaries;
     this.summaryAt = at;
   }
+  currentNow() {
+    return typeof this.client?.now === "function" ? this.client.now() : Date.now();
+  }
+  touchEntry(entry) {
+    entry.lastAccessedAt = this.currentNow();
+  }
   trim(keep) {
     for (const [key, e] of this.entries) {
       if (this.cachedBytes <= this.budgetBytes) break;
@@ -680,6 +687,38 @@ var TrajectoryReader = class {
       this.cachedBytes -= e.bytes;
       this.entries.delete(key);
     }
+  }
+  trimIdle(maxAgeMs = 18e4, keepIds) {
+    const now = this.currentNow();
+    const isKept = (key) => Boolean(keepIds && (keepIds.has(key) || keepIds.has(key.toLowerCase())));
+    let evicted = 0;
+    for (const [key, e] of [...this.entries]) {
+      if (isKept(key) || e.pending || e.backfilling) continue;
+      const accessedAt = e.lastAccessedAt ?? e.verifiedAt ?? 0;
+      if (now - accessedAt >= maxAgeMs) {
+        this.cachedBytes = Math.max(0, this.cachedBytes - e.bytes);
+        this.entries.delete(key);
+        evicted++;
+      }
+    }
+    const inactiveCap = Math.min(this.budgetBytes, INACTIVE_IDLE_BYTES_CAP);
+    let inactiveBytes = 0;
+    for (const [key, e] of this.entries) {
+      if (!isKept(key) && !e.pending && !e.backfilling) {
+        inactiveBytes += e.bytes;
+      }
+    }
+    if (inactiveBytes > inactiveCap) {
+      for (const [key, e] of [...this.entries]) {
+        if (inactiveBytes <= inactiveCap) break;
+        if (isKept(key) || e.pending || e.backfilling) continue;
+        inactiveBytes -= e.bytes;
+        this.cachedBytes = Math.max(0, this.cachedBytes - e.bytes);
+        this.entries.delete(key);
+        evicted++;
+      }
+    }
+    return evicted;
   }
   async summary(id, provided, force = false) {
     if (provided) return provided;
@@ -727,11 +766,15 @@ var TrajectoryReader = class {
       this.endpoint = endpoint;
     }
     let entry = this.entries.get(id);
-    if (entry?.pending) return entry.pending;
+    if (entry?.pending) {
+      this.touchEntry(entry);
+      return entry.pending;
+    }
     if (!entry) {
       entry = { data: null, bytes: 0, withTimeline: false };
       this.entries.set(id, entry);
     }
+    this.touchEntry(entry);
     const epoch = this.epoch;
     const current = () => epoch === this.epoch && this.entries.get(id) === entry && isCurrent();
     const assertCurrent = () => {
@@ -741,6 +784,7 @@ var TrajectoryReader = class {
     activeEntry.pending = (localSqliteOnly ? this.loadLocalDirectEntry(id, activeEntry, provided, force, wantTimeline, assertCurrent, conversationsDir) : this.loadEntry(id, activeEntry, provided, force, wantTimeline, assertCurrent, conversationsDir)).finally(() => {
       activeEntry.pending = null;
       if (!activeEntry.data && current()) this.entries.delete(id);
+      else if (activeEntry.data && current()) this.touchEntry(activeEntry);
       if (current()) this.trim(id);
     });
     return activeEntry.pending;
@@ -810,7 +854,8 @@ var TrajectoryReader = class {
     if (!stamp) throw new Error("\u4F1A\u8BDD\u6682\u65F6\u6CA1\u6709\u53EF\u7528\u7EDF\u8BA1");
     const mark = `sqlite:${stamp}`;
     if (!force && entry.data && entry.withTimeline === wantTimeline && entry.mark === mark) {
-      entry.verifiedAt = this.client.now();
+      entry.verifiedAt = this.currentNow();
+      this.touchEntry(entry);
       this.entries.delete(id);
       this.entries.set(id, entry);
       return entry.data;
@@ -838,7 +883,8 @@ var TrajectoryReader = class {
     entry.mark = mark;
     entry.withTimeline = wantTimeline;
     entry.rev = (entry.rev || 0) + 1;
-    entry.verifiedAt = this.client.now();
+    entry.verifiedAt = this.currentNow();
+    this.touchEntry(entry);
     this.entries.delete(id);
     this.entries.set(id, entry);
     this.trim(id);
@@ -856,7 +902,8 @@ var TrajectoryReader = class {
         assertCurrent();
       } catch (err) {
         if (err?.message === "\u4F1A\u8BDD\u6682\u65F6\u6CA1\u6709\u53EF\u7528\u7EDF\u8BA1") {
-          if (!force && entry.data && entry.withTimeline === wantTimeline && this.client.now() - (entry.verifiedAt ?? 0) < this.idleRecheckMs) {
+          if (!force && entry.data && entry.withTimeline === wantTimeline && this.currentNow() - (entry.verifiedAt ?? 0) < this.idleRecheckMs) {
+            this.touchEntry(entry);
             this.entries.delete(id);
             this.entries.set(id, entry);
             return entry.data;
@@ -871,7 +918,8 @@ var TrajectoryReader = class {
               };
               const synthMark = JSON.stringify([sqliteVal.numTotalSteps, void 0, sqliteVal.status, void 0]);
               if (!force && entry.data && entry.withTimeline === wantTimeline && entry.mark === synthMark) {
-                entry.verifiedAt = this.client.now();
+                entry.verifiedAt = this.currentNow();
+                this.touchEntry(entry);
                 this.entries.delete(id);
                 this.entries.set(id, entry);
                 return entry.data;
@@ -898,7 +946,8 @@ var TrajectoryReader = class {
     const old = entry.data;
     const timelineModeMismatch = Boolean(old) && entry.withTimeline !== wantTimeline;
     const same = Boolean(old) && !timelineModeMismatch && entry.mark === mark;
-    if (!force && same && old && settled(resolvedSummary.status) && resolvedSummary.lastModifiedTime && this.client.now() - (entry.verifiedAt ?? 0) < this.idleRecheckMs) {
+    if (!force && same && old && settled(resolvedSummary.status) && resolvedSummary.lastModifiedTime && this.currentNow() - (entry.verifiedAt ?? 0) < this.idleRecheckMs) {
+      this.touchEntry(entry);
       this.entries.delete(id);
       this.entries.set(id, entry);
       return old;
@@ -1008,7 +1057,8 @@ var TrajectoryReader = class {
     entry.mark = mark;
     entry.withTimeline = wantTimeline;
     entry.rev = (entry.rev || 0) + 1;
-    entry.verifiedAt = this.client.now();
+    entry.verifiedAt = this.currentNow();
+    this.touchEntry(entry);
     this.entries.delete(id);
     this.entries.set(id, entry);
     this.trim(id);

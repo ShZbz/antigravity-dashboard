@@ -59,6 +59,8 @@ const QUOTA_IDLE_FORCE_TTL_MS = 90_000;
 const QUOTA_ACTIVE_TTL_MS = 12_000;
 const QUOTA_SETTLE_COOLDOWN_MS = 5_000;
 const QUOTA_EXPIRED_RETRY_MS = 10_000;
+const MAX_SESSIONS = 16;
+const MAX_RECENT_BASE_METRICS = 2;
 export const LOCAL_SQLITE_MODE_NOTICE = '当前版本已切换为本地 SQLite 直读模式（云端额度暂不可用）';
 
 function hasExpiredQuotaWindow(groups: QuotaGroup[] | null, now: number): boolean {
@@ -445,19 +447,67 @@ export class MetricsStore {
     return this.commitSummaries(rawSummaries);
   }
 
+  touchSession(id: string, entry: SessionEntry): void {
+    if (this.sessions.get(id) !== entry) return;
+    this.sessions.delete(id);
+    this.sessions.set(id, entry);
+  }
+
+  trimSessions(keepId: string | null = null): void {
+    if (this.sessions.size <= MAX_SESSIONS) return;
+    for (const [key, entry] of this.sessions) {
+      if (this.sessions.size <= MAX_SESSIONS) break;
+      if (entry.pending || key === keepId || key === this.lastActiveConversationId) continue;
+      entry.baseMetrics = null;
+      entry.rawWeak = null;
+      entry.rawRev = null;
+      this.sessions.delete(key);
+    }
+  }
+
+  pruneBaseMetrics(): void {
+    const keepFrom = Math.max(0, this.sessions.size - MAX_RECENT_BASE_METRICS);
+    let idx = 0;
+    for (const entry of this.sessions.values()) {
+      const isRecent = idx >= keepFrom;
+      idx++;
+      if (!entry.baseMetrics) continue;
+      const rawDead = entry.rawWeak != null && entry.rawWeak.deref() === undefined;
+      if (rawDead || (!isRecent && !entry.pending)) {
+        entry.baseMetrics = null;
+        if (rawDead) {
+          entry.rawWeak = null;
+          entry.rawRev = null;
+        }
+      }
+    }
+  }
+
   async session(id: string, force = false): Promise<SpeedMetrics> {
     if (!GUID.test(id)) throw new Error('会话标识无效');
     let entry = this.sessions.get(id);
+    if (entry) {
+      this.touchSession(id, entry);
+    }
     if (entry?.pending) return entry.pending;
     const summaryState = this.summaryStates.get(id);
     const summaryChanged =
       Boolean(summaryState && entry?.polledSummaryFingerprint !== summaryState.fingerprint) ||
       this.newlySettledSessionIds.has(id);
     if (!force && !summaryChanged && entry?.data && Date.now() - (entry.updatedAt ?? 0) < 1800) {
+      this.pruneBaseMetrics();
       return entry.data;
     }
-    if (!entry) { entry = {}; this.sessions.set(id, entry); }
-    entry.pending = runSessionPoll(this, id, entry, force).finally(() => { entry!.pending = null; });
+    if (!entry) {
+      entry = {};
+      this.sessions.set(id, entry);
+      this.trimSessions(id);
+    }
+    entry.pending = runSessionPoll(this, id, entry, force).finally(() => {
+      entry!.pending = null;
+      this.trimSessions(id);
+      this.pruneBaseMetrics();
+    });
     return entry.pending;
   }
 

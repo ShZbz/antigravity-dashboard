@@ -20,6 +20,7 @@ export function validTarget(target: DevToolsTarget | null | undefined, port: num
 export function validatedInput(value: unknown): {
   conversationId: string | null;
   force: boolean;
+  includeUsage?: boolean;
 } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid metrics request');
@@ -28,7 +29,11 @@ export function validatedInput(value: unknown): {
   if (input.conversationId != null && !GUID_RE.test(input.conversationId)) {
     throw new Error('Invalid conversation ID');
   }
-  return { conversationId: input.conversationId || null, force: input.force === true };
+  return {
+    conversationId: input.conversationId || null,
+    force: input.force === true,
+    ...(typeof input.includeUsage === 'boolean' ? { includeUsage: input.includeUsage } : {}),
+  };
 }
 
 export async function discoverTargets(profile: string): Promise<DevToolsTarget[]> {

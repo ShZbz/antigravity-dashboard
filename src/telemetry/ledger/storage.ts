@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { UsageRecord } from '../../contracts/usage.ts';
 import { atomicWriteFile, formatStatStamp, type FileStatLike } from '../../shared/atomic-fs.ts';
+import { isNativeAccelAvailable } from '../../platform/native-bridge.ts';
 import { platformPaths } from '../../platform/paths.ts';
 import { isErrno, sha256, uniqueRecordIds, validRow } from './helpers.ts';
 import {
@@ -61,6 +62,7 @@ export class LedgerStorage {
 
   writeQueue: Promise<unknown> = Promise.resolve();
   revision = 0;
+  lastUsageActivityAt = 0;
   cache: SummaryCacheEntry | null = null;
   fileIndex = new Map<string, Map<string, FileIndexEntry>>();
   dirtyRelPaths = new Set<string>();
@@ -96,7 +98,12 @@ export class LedgerStorage {
     return this.writeQueue;
   }
 
+  touchUsageActivity(now: number = Date.now()): void {
+    if (now > this.lastUsageActivityAt) this.lastUsageActivityAt = now;
+  }
+
   enqueueWrite<T>(fn: () => Promise<T>): Promise<T> {
+    this.touchUsageActivity();
     const run = () => fn();
     const pending = this.writeQueue.then(run, run);
     this.writeQueue = pending.catch(() => {});
@@ -128,30 +135,34 @@ export class LedgerStorage {
     const rel = `${scope}/${name}`;
     this.dirtyRelPaths.add(rel);
     this.projectDirtyRelPaths.add(rel);
+    this.touchUsageActivity();
   }
 
   _bumpKeyVersion(scope: string, name: string): void {
     const key = `${scope}/${name}`;
     this.keyVersions.set(key, (this.keyVersions.get(key) || 0) + 1);
+    this.touchUsageActivity();
   }
 
   async _setFileIndexFromWrite(scope: string, name: string, file: string, record: LedgerDocument): Promise<void> {
     this._bumpKeyVersion(scope, name);
     this._markDirtyRelPath(scope, name);
-    let st: FileStatLike | null = null;
-    try {
-      st = await this._stat(file);
-    } catch {
-      // Ignore stat errors after successful atomic rename.
+    if (this.hasCustomFs || !isNativeAccelAvailable()) {
+      let st: FileStatLike | null = null;
+      try {
+        st = await this._stat(file);
+      } catch {
+        // Ignore stat errors after successful atomic rename.
+      }
+      let scopeMap = this.fileIndex.get(scope);
+      if (!scopeMap) {
+        scopeMap = new Map<string, FileIndexEntry>();
+        this.fileIndex.set(scope, scopeMap);
+      }
+      const stamp = formatStatStamp(st);
+      if (stamp) scopeMap.set(name, { stamp, unreadable: false, record, recordIds: uniqueRecordIds(record.records) });
+      else scopeMap.delete(name);
     }
-    let scopeMap = this.fileIndex.get(scope);
-    if (!scopeMap) {
-      scopeMap = new Map<string, FileIndexEntry>();
-      this.fileIndex.set(scope, scopeMap);
-    }
-    const stamp = formatStatStamp(st);
-    if (stamp) scopeMap.set(name, { stamp, unreadable: false, record, recordIds: uniqueRecordIds(record.records) });
-    else scopeMap.delete(name);
     this.revision++;
     this.cache = null;
   }

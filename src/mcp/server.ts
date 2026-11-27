@@ -15,6 +15,7 @@ import {
   type StdioTransportOptions,
 } from './protocol.ts';
 import {
+  DEFAULT_IDLE_DISPOSE_MS,
   PULSE_MCP_TOOLS,
   USAGE_APP_MIME_TYPE,
   USAGE_APP_RESOURCE_URI,
@@ -23,10 +24,10 @@ import {
   type PulseMcpBackendOptions,
 } from './tools.ts';
 
-export { USAGE_APP_MIME_TYPE, USAGE_APP_RESOURCE_URI } from './tools.ts';
+export { DEFAULT_IDLE_DISPOSE_MS, USAGE_APP_MIME_TYPE, USAGE_APP_RESOURCE_URI } from './tools.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FALLBACK_VERSION = '0.12.7';
+const FALLBACK_VERSION = '0.12.8';
 
 export interface PulseMcpServerOptions extends PulseMcpBackendOptions {
   here?: string;

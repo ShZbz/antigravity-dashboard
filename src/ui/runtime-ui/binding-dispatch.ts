@@ -73,11 +73,19 @@ export interface RuntimeDispatchHost {
   clearTimeline?: RuntimeUiOptions['clearTimeline'];
 }
 
+const MAX_BRIDGE_RESULT_BYTES = 1048576;
+
+function exceedsBridgeLimit(jsonText: string): boolean {
+  if (jsonText.length > MAX_BRIDGE_RESULT_BYTES) return true;
+  if (jsonText.length <= Math.floor(MAX_BRIDGE_RESULT_BYTES / 3)) return false;
+  return Buffer.byteLength(jsonText, 'utf8') > MAX_BRIDGE_RESULT_BYTES;
+}
+
 export async function dispatchBindingCall(
   host: RuntimeDispatchHost,
   connection: RuntimeSessionConnection,
   input: BindingPayload,
-): Promise<{ handled: boolean; result?: unknown }> {
+): Promise<{ handled: boolean; result?: unknown; serializedResult?: string }> {
   let result: unknown = {};
   if (input.type === 'metrics') {
     if (await host.enabled()) {
@@ -283,10 +291,12 @@ export async function dispatchBindingCall(
     return { handled: false };
   }
 
-  if (JSON.stringify(result).length > 1048576) {
+  let serializedResult = JSON.stringify(result) ?? 'null';
+  if (exceedsBridgeLimit(serializedResult)) {
     result = offlineSnapshot('Metrics response too large');
+    serializedResult = JSON.stringify(result);
   }
-  return { handled: true, result };
+  return { handled: true, result, serializedResult };
 }
 
 export function formatBindingError(type: string, error: unknown): unknown {

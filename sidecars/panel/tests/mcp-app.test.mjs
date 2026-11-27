@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { createPulseMcpHandler } from '../../../mcp/server.mjs';
+import { UsageLedger } from '../usage.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SERVER_PATH = join(ROOT, 'mcp', 'server.mjs');
@@ -338,4 +342,317 @@ test('MCP server stdio handshake, tool metadata, UI resource, and actions work e
 
   // Strict stdout hygiene: zero non-JSON lines emitted to stdout
   assert.deepEqual(client.getInvalidStdoutLines(), []);
+});
+
+function createIsolatedPaths(rootDir) {
+  const home = join(rootDir, 'home');
+  const data = join(rootDir, 'data');
+  const settings = join(rootDir, 'settings', 'settings.json');
+  const pluginConfig = join(rootDir, 'plugin', 'config.json');
+  mkdirSync(home, { recursive: true });
+  mkdirSync(data, { recursive: true });
+  mkdirSync(dirname(settings), { recursive: true });
+  mkdirSync(dirname(pluginConfig), { recursive: true });
+  return {
+    home,
+    local: data,
+    config: dirname(settings),
+    profile: 'mcp-test-profile',
+    log: join(data, 'pulse.log'),
+    logCandidates: [],
+    settings,
+    backups: join(data, 'backups'),
+    appAsar: '',
+    pluginDir: join(rootDir, 'plugin'),
+    pluginConfig,
+    data,
+    isIsolatedVertex: false,
+  };
+}
+
+test('initialize, tools/list, and resources/list load zero heavy modules; open_usage_dashboard & query_usage_stats avoid MetricsStore', async (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'ag-mcp-lazy-'));
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }));
+  const paths = createIsolatedPaths(tempRoot);
+
+  const script = `
+    import { registerHooks } from 'node:module';
+    const loadedUrls = [];
+    registerHooks({
+      resolve(specifier, context, nextResolve) {
+        const res = nextResolve(specifier, context);
+        if (!res.url.startsWith('node:')) loadedUrls.push(res.url);
+        return res;
+      },
+    });
+    const { createPulseMcpHandler } = await import(${JSON.stringify(pathToFileURL(SERVER_PATH).href)});
+    const handler = createPulseMcpHandler({
+      paths: ${JSON.stringify(paths)},
+      readTheme: async () => ({}),
+      idleDisposeMs: 0,
+    });
+    const initRes = await handler.handleMessage({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {} },
+    });
+    await handler.handleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    const toolsRes = await handler.handleMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    const resourcesRes = await handler.handleMessage({ jsonrpc: '2.0', id: 3, method: 'resources/list' });
+    const afterDiscovery = [...loadedUrls];
+
+    const openRes = await handler.handleMessage({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'open_usage_dashboard', arguments: {} },
+    });
+    const statsModelRes = await handler.handleMessage({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: { name: 'query_usage_stats', arguments: { period: 'month', dimension: 'model' } },
+    });
+    const statsProjectRes = await handler.handleMessage({
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'tools/call',
+      params: { name: 'query_usage_stats', arguments: { period: 'month', dimension: 'project' } },
+    });
+    const afterUsageCalls = [...loadedUrls];
+
+    handler.dispose();
+    console.log(JSON.stringify({
+      initOk: !initRes.error,
+      toolCount: toolsRes.result?.tools?.length ?? 0,
+      resourceCount: resourcesRes.result?.resources?.length ?? 0,
+      openOk: openRes.result?.structuredContent?.ok === true,
+      statsModelOk: statsModelRes.result?.structuredContent?.ok === true,
+      statsProjectOk: statsProjectRes.result?.structuredContent?.ok === true,
+      afterDiscovery,
+      afterUsageCalls,
+    }));
+  `;
+
+  const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: paths.home,
+      USERPROFILE: paths.home,
+      ANTIGRAVITY_EXECUTABLE_DATA_DIR: paths.data,
+      PULSE_DISABLE_NATIVE_ACCEL: '1',
+    },
+  });
+  assert.equal(res.status, 0, `Child failed: ${res.stderr}`);
+  const summary = JSON.parse(res.stdout.trim().split(/\r?\n/).pop());
+  assert.equal(summary.initOk, true);
+  assert.equal(summary.toolCount, 4);
+  assert.equal(summary.resourceCount, 1);
+  assert.equal(summary.openOk, true);
+  assert.equal(summary.statsModelOk, true);
+  assert.equal(summary.statsProjectOk, true);
+
+  const heavyOnDiscovery = summary.afterDiscovery.filter((u) =>
+    /(?:usage|store|preferences|host-theme|local-conversations|platform)\.(?:mjs|ts)$/i.test(u),
+  );
+  assert.deepEqual(
+    heavyOnDiscovery,
+    [],
+    `initialize/tools/list/resources/list must not load heavy modules, got: ${JSON.stringify(heavyOnDiscovery)}`,
+  );
+
+  const storeLoadedDuringUsage = summary.afterUsageCalls.filter((u) =>
+    /(?:^|\/)store\.mjs$|telemetry\/store\/index\.ts$/i.test(u),
+  );
+  assert.deepEqual(
+    storeLoadedDuringUsage,
+    [],
+    `open_usage_dashboard and query_usage_stats must not load/instantiate MetricsStore, got: ${JSON.stringify(storeLoadedDuringUsage)}`,
+  );
+});
+
+test('open_usage_dashboard resolves active account from ledger without MetricsStore', async (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'ag-mcp-account-'));
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }));
+  const paths = createIsolatedPaths(tempRoot);
+  const ledger = new UsageLedger(join(paths.data, 'usage-v1'));
+  const scopeHash = createHash('sha256').update('mcp-local-user@example.test').digest('hex');
+  await ledger.registerAccount(scopeHash, { email: 'mcp-local-user@example.test', name: 'MCP Local', primary: true });
+  await ledger.setActiveLocalAccount(scopeHash);
+
+  const handler = createPulseMcpHandler({
+    paths,
+    ledger,
+    readTheme: async () => ({}),
+    idleDisposeMs: 0,
+  });
+  t.after(() => handler.dispose());
+
+  const openRes = await handler.handleMessage({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'open_usage_dashboard', arguments: {} },
+  });
+  assert.equal(openRes.error, undefined);
+  assert.equal(openRes.result?.structuredContent?.ok, true);
+  const usageSnap = openRes.result?.structuredContent?.initial?.usage;
+  assert.equal(usageSnap?.recordingAccount, scopeHash);
+  assert.equal(usageSnap?.activeAccount, scopeHash);
+});
+
+test('idle teardown skips while in-flight, disposes caches after idleDisposeMs, and re-initializes cleanly on subsequent calls', async (t) => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'ag-mcp-idle-'));
+  t.after(() => rmSync(tempRoot, { recursive: true, force: true }));
+  const paths = createIsolatedPaths(tempRoot);
+
+  // 1. In-flight guard & dispose verification using injected doubles
+  let storeDisposes = 0;
+  let usageDisposes = 0;
+  let releaseSnapshot;
+  const snapshotGate = new Promise((resolveGate) => {
+    releaseSnapshot = resolveGate;
+  });
+
+  const fakeStore = {
+    identity: null,
+    epoch: 0,
+    localFallbackActive: false,
+    usagePersistenceError: false,
+    rawSummaries: null,
+    setModelTimelineEnabled() {},
+    async snapshot() {
+      await snapshotGate;
+      return {
+        connection: 'offline',
+        source: 'test',
+        error: null,
+        sessionError: null,
+        quotaUpdatedAt: null,
+        serverTime: new Date().toISOString(),
+        groups: [],
+        speed: null,
+        conversations: [],
+        persistenceError: null,
+      };
+    },
+    dispose() {
+      storeDisposes += 1;
+    },
+  };
+  const fakeUsage = {
+    viewScope: 'all',
+    dispose() {
+      usageDisposes += 1;
+    },
+  };
+  const fakeLedger = {
+    timeZone: 'Asia/Shanghai',
+    cache: { stale: true },
+    fileIndex: new Map([['a', new Map()]]),
+    metaCache: {},
+    ownershipCache: {},
+    dirtyRelPaths: new Set(),
+    projectDirtyRelPaths: new Set(),
+    keyVersions: new Map(),
+    async summary() {
+      return {
+        today: '2026-11-27',
+        todayTokens: 0,
+        weekTokens: 0,
+        monthTokens: 0,
+        totalTokens: 0,
+        requests: 0,
+        unknownTokens: 0,
+        unknownRequests: 0,
+        partialRequests: 0,
+        unreadableFiles: 0,
+        days: [],
+        manualEntries: [],
+        userMeta: {},
+        updatedAt: new Date().toISOString(),
+      };
+    },
+    async getAccounts() {
+      return [];
+    },
+    async getActiveLocalAccount() {
+      return null;
+    },
+  };
+
+  const spyHandler = createPulseMcpHandler({
+    paths,
+    store: fakeStore,
+    usage: fakeUsage,
+    ledger: fakeLedger,
+    readTheme: async () => ({}),
+    idleDisposeMs: 40,
+  });
+  t.after(() => spyHandler.dispose());
+
+  const inFlightReq = spyHandler.handleMessage({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'get_quota_and_session', arguments: {} },
+  });
+
+  await delay(90);
+  assert.equal(storeDisposes, 0, 'Idle teardown must NOT fire while a tool call is in-flight');
+  assert.equal(usageDisposes, 0, 'Idle teardown must NOT dispose usage while in-flight');
+
+  releaseSnapshot();
+  const inFlightRes = await inFlightReq;
+  assert.equal(inFlightRes.error, undefined);
+  assert.equal(inFlightRes.result?.structuredContent?.connection, 'offline');
+
+  await delay(90);
+  assert.equal(storeDisposes, 1, 'Idle teardown should dispose store after idleDisposeMs');
+  assert.equal(usageDisposes, 1, 'Idle teardown should dispose usage after idleDisposeMs');
+  assert.equal(fakeLedger.cache, null, 'Idle teardown should clear ledger in-memory cache');
+  assert.equal(fakeLedger.fileIndex.size, 0, 'Idle teardown should clear ledger fileIndex');
+
+  // 2. Real backend caches re-initialize transparently after idle teardown
+  const realHandler = createPulseMcpHandler({
+    paths,
+    readTheme: async () => ({}),
+    idleDisposeMs: 35,
+  });
+  t.after(() => realHandler.dispose());
+
+  const firstOpen = await realHandler.handleMessage({
+    jsonrpc: '2.0',
+    id: 10,
+    method: 'tools/call',
+    params: { name: 'open_usage_dashboard', arguments: {} },
+  });
+  assert.equal(firstOpen.result?.structuredContent?.ok, true);
+
+  await delay(85);
+
+  const secondOpen = await realHandler.handleMessage({
+    jsonrpc: '2.0',
+    id: 11,
+    method: 'tools/call',
+    params: { name: 'open_usage_dashboard', arguments: {} },
+  });
+  assert.equal(secondOpen.error, undefined);
+  assert.equal(secondOpen.result?.structuredContent?.ok, true);
+  assert.ok(secondOpen.result?.structuredContent?.initial?.usage);
+
+  const afterStats = await realHandler.handleMessage({
+    jsonrpc: '2.0',
+    id: 12,
+    method: 'tools/call',
+    params: { name: 'query_usage_stats', arguments: { period: 'month', dimension: 'model' } },
+  });
+  assert.equal(afterStats.error, undefined);
+  assert.equal(afterStats.result?.structuredContent?.ok, true);
+
+  realHandler.dispose();
+  realHandler.dispose();
 });

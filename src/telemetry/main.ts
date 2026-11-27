@@ -32,6 +32,7 @@ import {
 } from '../lifecycle/debug-launch.ts';
 import { platformPaths } from '../platform/paths.ts';
 import { discoverDevToolsTargets } from '../platform/devtools.ts';
+import { releaseNativeCaches } from '../platform/native-bridge.ts';
 import { PreferencesStore } from '../platform/preferences-store.ts';
 import { SidecarOwner } from '../platform/sidecar-owner.ts';
 import { AntigravityClient } from './client/index.ts';
@@ -69,6 +70,21 @@ const readCompat = (name: string, cache: Map<string, string> | null): string => 
 const buildExtras = (cache: Map<string, string> | null): string =>
   bindWindowFactory('__agPulseUpdateFactory', readCompat('update-ui.cjs', cache), 'update-ui') +
   bindWindowFactory('__agPulseUsageFactory', readCompat('usage-ui.cjs', cache), 'usage-ui');
+const buildRendererSource = (
+  token: string | null | undefined,
+  startedAt: number | undefined,
+  cache: Map<string, string> | null = null,
+): string =>
+  makeRendererSource(
+    readCompat('i18n.cjs', cache),
+    readCompat('inline-widget.cjs', cache),
+    readCompat('theme.cjs', cache),
+    token ?? null,
+    startedAt ?? 0,
+    buildExtras(cache),
+  );
+const usageUiModule = (): string =>
+  bindWindowFactory('__agPulseUsageFactory', readCompat('usage-ui.cjs', null), 'usage-ui');
 
 const GUID = /^(?:[a-zA-Z0-9_.-]+\/)*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const compatCache = new Map<string, string>();
@@ -172,7 +188,7 @@ type PanelMetricsRequestInput = MetricsRequestInput & { includeUsage?: boolean }
 
 const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const parseIncludeUsage = (value: unknown): boolean =>
-  value !== '0' && value !== 0 && value !== false;
+  value !== '0' && value !== 0 && value !== false && value !== 'false';
 const staticCacheControl = (path: string, data: unknown): string => {
   if (path === '/') return 'no-cache';
   const version =
@@ -206,7 +222,8 @@ const createMetrics = (
   };
   if (input?.includeUsage === false) {
     const { conversations: _omitted, ...compactBase } = base;
-    return { ...compactBase, preferences: prefs, theme, integration };
+    const usageTotals = await targetUsage.totalsSnapshot();
+    return { ...compactBase, usageTotals, preferences: prefs, theme, integration };
   }
   return { ...base, usage: await targetUsage.snapshot(), preferences: prefs, theme, integration };
 };
@@ -217,7 +234,7 @@ const staticFiles: Record<string, [string, string]> = {
   '/format.mjs': ['format.mjs', 'text/javascript'],
   '/logo.svg': ['../../assets/logo.svg', 'image/svg+xml'],
 };
-const inlineSource = (cache: Map<string, string> | null = isSidecar ? compatCache : null): string => {
+const inlineSource = (cache: Map<string, string> | null = null): string => {
   const file = readCompat('inline-widget.cjs', cache);
   const i18n = readCompat('i18n.cjs', cache);
   const theme = readCompat('theme.cjs', cache);
@@ -228,15 +245,10 @@ const inlineSource = (cache: Map<string, string> | null = isSidecar ? compatCach
     invokeCjsFactory(file, 'inline-widget')
   );
 };
-const i18nModule = (cache: Map<string, string> | null = isSidecar ? compatCache : null): string =>
+const i18nModule = (cache: Map<string, string> | null = null): string =>
   makeEsmExportFromCjs('createI18n', readCompat('i18n.cjs', cache), 'i18n');
-const themeModule = (cache: Map<string, string> | null = isSidecar ? compatCache : null): string =>
+const themeModule = (cache: Map<string, string> | null = null): string =>
   makeEsmExportFromCjs('createTheme', readCompat('theme.cjs', cache), 'theme');
-
-const sharedI18n = readCompat('i18n.cjs', compatCache);
-const sharedInline = readCompat('inline-widget.cjs', compatCache);
-const sharedTheme = readCompat('theme.cjs', compatCache);
-const sharedExtras = buildExtras(compatCache);
 
 const metrics = createMetrics(store, usage, () => integration.health, paths.profile);
 const proUsageBridge = {
@@ -253,17 +265,20 @@ const proUsageBridge = {
   setRecordingAccount: (input?: SetRecordingAccountRequest) => usage.setRecordingAccount(input),
   addAccount: (input?: AddAccountRequest) => usage.addLocalAccount(input || {}),
   reassignConversation: (input: ReassignConversationRequest) => usage.reassignConversation(input),
-  getProjectUsage: (input?: { scope?: string | null; from?: string; to?: string }) =>
-    queryProjectUsageOverview({
+  getProjectUsage: (input?: { scope?: string | null; from?: string; to?: string }) => {
+    usage.ledger.touchUsageActivity();
+    return queryProjectUsageOverview({
       ledger: usage.ledger,
       store,
       profileDir: dirname(defaultConversationsDir('app', homedir())),
       scope: input?.scope ?? null,
       from: input?.from,
       to: input?.to,
-    }),
-  getProjectDetail: (input: { projectKey: string; scope?: string | null; from?: string; to?: string }) =>
-    queryProjectConversationDetail({
+    });
+  },
+  getProjectDetail: (input: { projectKey: string; scope?: string | null; from?: string; to?: string }) => {
+    usage.ledger.touchUsageActivity();
+    return queryProjectConversationDetail({
       ledger: usage.ledger,
       store,
       profileDir: dirname(defaultConversationsDir('app', homedir())),
@@ -271,7 +286,8 @@ const proUsageBridge = {
       scope: input?.scope ?? null,
       from: input?.from,
       to: input?.to,
-    }),
+    });
+  },
 };
 const integration = new RuntimeUi({
   snapshot: (input) => metrics(input),
@@ -279,7 +295,7 @@ const integration = new RuntimeUi({
   updater,
   owner: ownership?.token,
   owns: () => (ownership ? ownership.running && ownership.isOwner() : true),
-  source: makeRendererSource(sharedI18n, sharedInline, sharedTheme, ownership?.token, ownership?.startedAt, sharedExtras),
+  source: buildRendererSource(ownership?.token, ownership?.startedAt, compatCache),
   dataDir: paths.data,
   enabled: isEnabled,
   addManualUsage: proUsageBridge.addManualUsage,
@@ -339,7 +355,7 @@ const createVertexInstance = () => {
     updater,
     owner: vToken,
     owns: () => (ownership ? ownership.running && ownership.isOwner() : true),
-    source: makeRendererSource(sharedI18n, sharedInline, sharedTheme, vToken, ownership?.startedAt, sharedExtras),
+    source: buildRendererSource(vToken, ownership?.startedAt),
     dataDir: vDataDir,
     enabled: isEnabled,
     addManualUsage: (input) => {
@@ -379,6 +395,7 @@ const createVertexInstance = () => {
     },
     getProjectUsage: (input) => {
       vertexController?.recordActivity('runtime-ui-usage');
+      vertexUsage.ledger.touchUsageActivity();
       return queryProjectUsageOverview({
         ledger: vertexUsage.ledger,
         store: vStore,
@@ -390,6 +407,7 @@ const createVertexInstance = () => {
     },
     getProjectDetail: (input) => {
       vertexController?.recordActivity('runtime-ui-usage');
+      vertexUsage.ledger.touchUsageActivity();
       return queryProjectConversationDetail({
         ledger: vertexUsage.ledger,
         store: vStore,
@@ -448,6 +466,7 @@ if (isSidecar) {
   const cachedI18n = i18nModule(compatCache);
   const cachedTheme = themeModule(compatCache);
   const cachedCss = themeCss();
+  compatCache.clear();
   for (const [path, [file, type]] of Object.entries(staticFiles)) {
     const content = path === '/' ? cachedPage : readFileSync(join(HERE, file), 'utf8');
     app.api(
@@ -462,6 +481,15 @@ if (isSidecar) {
       new Response(cachedApp, {
         contentType: 'application/javascript',
         headers: { 'Cache-Control': staticCacheControl('/app.js', data) },
+      }),
+    'GET',
+  );
+  app.api(
+    '/usage-ui.js',
+    (data) =>
+      new Response(usageUiModule(), {
+        contentType: 'application/javascript; charset=utf-8',
+        headers: { 'Cache-Control': staticCacheControl('/usage-ui.js', data) },
       }),
     'GET',
   );
@@ -584,6 +612,84 @@ if (isSidecar) {
       return await store.clearTimeline(typeof cid === 'string' ? cid : null);
     } catch (error) { return new Response(JSON.stringify({ error: errorMessage(error) || 'Timeline cache could not be cleared' }), { status: 400, contentType: 'application/json' }); }
   }, 'POST');
+  type IdleTrimmable = {
+    trimIdle?: (maxAgeMs?: number, keepIds?: ReadonlySet<string>) => number;
+  };
+  const collectKeepIds = (targetStore: MetricsStore): Set<string> => {
+    const keep = new Set<string>();
+    const addId = (id: unknown): void => {
+      if (typeof id === 'string' && id) {
+        keep.add(id);
+        keep.add(id.toLowerCase());
+      }
+    };
+    addId(targetStore.lastActiveConversationId);
+    for (const id of targetStore.runningSessionIds) addId(id);
+    for (const [id, entry] of targetStore.sessions) {
+      if (entry.pending) addId(id);
+    }
+    const tasks = targetStore.delegated?.tasks;
+    if (tasks) {
+      for (const [parentId, task] of tasks) {
+        if ((keep.has(parentId) || keep.has(parentId.toLowerCase())) && task.children) {
+          for (const childId of task.children) addId(childId);
+        }
+      }
+    }
+    return keep;
+  };
+  const trimStoreIdleCaches = (targetStore: MetricsStore | null | undefined, maxAgeMs = 180_000): void => {
+    if (!targetStore) return;
+    const keepIds = collectKeepIds(targetStore);
+    (targetStore.client?.reader as IdleTrimmable | undefined)?.trimIdle?.(maxAgeMs, keepIds);
+    (targetStore.delegated as IdleTrimmable | null)?.trimIdle?.(maxAgeMs, keepIds);
+    (targetStore.transcripts as IdleTrimmable | null)?.trimIdle?.(maxAgeMs, keepIds);
+  };
+  const countOpenSessions = (ui: RuntimeUi | null | undefined): number => {
+    if (!ui) return 0;
+    let open = 0;
+    for (const conn of ui.sessions.values()) {
+      if (conn.closed !== true) open++;
+    }
+    return open;
+  };
+  const probeRendererCount = async (): Promise<number> => {
+    const attached = countOpenSessions(integration) + countOpenSessions(vertexController?.getIntegration());
+    if (attached > 0) return attached;
+    let total = 0;
+    for (const profile of [paths.profile, vertexProfile]) {
+      if (!profile || !existsSync(join(profile, 'DevToolsActivePort'))) continue;
+      try {
+        const { targets } = await discoverDevToolsTargets(profile, { mode: 'desktop', timeoutMs: 1000 });
+        total += targets.length;
+      } catch {}
+    }
+    return total;
+  };
+  let lastNativeSoftReleaseAt = 0;
+  const runHousekeeping = (): void => {
+    trimStoreIdleCaches(store, 180_000);
+    trimStoreIdleCaches(vertexController?.getStore(), 180_000);
+    const now = Date.now();
+    const vUsage = vertexController?.getUsage() ?? null;
+    const lastUsageActivity = Math.max(
+      proLedger.lastUsageActivityAt || 0,
+      vUsage?.ledger?.lastUsageActivityAt || 0,
+    );
+    if (
+      lastUsageActivity > 0 &&
+      lastUsageActivity > lastNativeSoftReleaseAt &&
+      now - lastUsageActivity >= 120_000
+    ) {
+      lastNativeSoftReleaseAt = now;
+      try {
+        releaseNativeCaches('soft');
+      } catch {}
+    }
+  };
+  const housekeepingTimer = setInterval(runHousekeeping, 60_000) as unknown as { unref?: () => void };
+  housekeepingTimer.unref?.();
+
   app.run();
   integration.start();
   vertexController.start();
@@ -592,6 +698,7 @@ if (isSidecar) {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(housekeepingTimer as unknown as ReturnType<typeof setInterval>);
     hostWatchdog?.stop();
     usage.dispose();
     const exitTimer = setTimeout(() => process.exit(0), 2000) as unknown as { unref?: () => void };
@@ -603,6 +710,7 @@ if (isSidecar) {
   };
   hostWatchdog = new HostLivenessWatchdog({
     profiles: [paths.profile, vertexProfile],
+    probeRendererCount,
     onShutdown: () => shutdown(),
   });
   hostWatchdog.start();
@@ -610,11 +718,13 @@ if (isSidecar) {
   updater.onReload = () => void shutdown();
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { void shutdown(); });
 } else {
+  compatCache.clear();
   // A dependency-free local preview uses the same collector and frontend.
   startPreviewServer({
     here: HERE, port: Number(process.env.AG_PULSE_PORT || 17891), guidPattern: GUID, staticFiles,
     livePreferences, store, metrics, getHealth: () => integration.health,
     usageBridge: proUsageBridge,
     i18nModule: () => i18nModule(), themeModule: () => themeModule(), themeCss, inlineSource: () => inlineSource(),
+    usageUiModule,
   });
 }

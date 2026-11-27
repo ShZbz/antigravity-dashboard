@@ -811,6 +811,7 @@ async function loadCachedSession(host, id, guid) {
   const epoch = host.epoch;
   const entry = host.sessions.get(id);
   if (entry?.data && usableMetrics(entry.data)) {
+    host.touchSession?.(id, entry);
     let modelTimeline2 = host.modelTimelineEnabled ? entry.data.modelTimeline || null : null;
     if (host.modelTimelineEnabled && !modelTimeline2 && host.timelineStore) {
       modelTimeline2 = await host.timelineStore.load(scope, id).catch(() => null);
@@ -830,6 +831,8 @@ async function loadCachedSession(host, id, guid) {
   const restored = { ...saved.metrics, modelTimeline };
   if (!host.sessions.has(id)) {
     host.sessions.set(id, { data: restored, savedAt: saved.savedAt, updatedAt: 0, withTimeline: host.modelTimelineEnabled });
+    host.trimSessions?.(id);
+    host.pruneBaseMetrics?.();
   }
   return { ...restored, transcriptRestoredFromHistory: !!saved.metrics.transcriptStats, restoredFromHistory: true, savedAt: saved.savedAt };
 }
@@ -990,6 +993,8 @@ async function runSessionPoll(host, id, entry, force) {
       if (!current()) throw new Error("\u540E\u53F0\u5DF2\u91CD\u65B0\u8FDE\u63A5\uFF0C\u8BF7\u7B49\u5F85\u5237\u65B0");
       if (sameTranscriptStats(nextTranscript, prev.transcriptStats) && sameTaskUsage(nextTaskUsage, prev.taskUsage) && sameStringList(nextDelegated, prev.delegatedConversations)) {
         entry.updatedAt = Date.now();
+        host.touchSession?.(id, entry);
+        host.pruneBaseMetrics?.();
         markSessionSummaryPolled(host, id, entry);
         return prev;
       }
@@ -1000,6 +1005,8 @@ async function runSessionPoll(host, id, entry, force) {
       const modelTimeline2 = await saveSessionTimeline(host, scope, id, raw, entry.baseMetrics);
       entry.data = { ...reconcileMetrics(prev, fresh2, entry.savedAt || null), conversationId: id, modelTimeline: modelTimeline2 };
       entry.updatedAt = Date.now();
+      host.touchSession?.(id, entry);
+      host.pruneBaseMetrics?.();
       await persistSessionHistory(host, scope, id, entry, current);
       if (!current()) throw new Error("\u540E\u53F0\u5DF2\u91CD\u65B0\u8FDE\u63A5\uFF0C\u8BF7\u7B49\u5F85\u5237\u65B0");
       markSessionSummaryPolled(host, id, entry);
@@ -1051,6 +1058,8 @@ async function runSessionPoll(host, id, entry, force) {
     entry.rawRev = readerRev;
     entry.withTimeline = timelineEnabled;
     entry.baseMetrics = readerRev !== null ? baseMetrics : null;
+    host.touchSession?.(id, entry);
+    host.pruneBaseMetrics?.();
     await persistSessionHistory(host, scope, id, entry, current);
     if (!current()) throw new Error("\u540E\u53F0\u5DF2\u91CD\u65B0\u8FDE\u63A5\uFF0C\u8BF7\u7B49\u5F85\u5237\u65B0");
     markSessionSummaryPolled(host, id, entry);
@@ -1085,6 +1094,8 @@ var QUOTA_IDLE_FORCE_TTL_MS = 9e4;
 var QUOTA_ACTIVE_TTL_MS = 12e3;
 var QUOTA_SETTLE_COOLDOWN_MS = 5e3;
 var QUOTA_EXPIRED_RETRY_MS = 1e4;
+var MAX_SESSIONS = 16;
+var MAX_RECENT_BASE_METRICS = 2;
 var LOCAL_SQLITE_MODE_NOTICE = "\u5F53\u524D\u7248\u672C\u5DF2\u5207\u6362\u4E3A\u672C\u5730 SQLite \u76F4\u8BFB\u6A21\u5F0F\uFF08\u4E91\u7AEF\u989D\u5EA6\u6682\u4E0D\u53EF\u7528\uFF09";
 function hasExpiredQuotaWindow(groups, now) {
   if (!Array.isArray(groups)) return false;
@@ -1428,21 +1439,61 @@ var MetricsStore = class {
     const rawSummaries = response.trajectorySummaries || {};
     return this.commitSummaries(rawSummaries);
   }
+  touchSession(id, entry) {
+    if (this.sessions.get(id) !== entry) return;
+    this.sessions.delete(id);
+    this.sessions.set(id, entry);
+  }
+  trimSessions(keepId = null) {
+    if (this.sessions.size <= MAX_SESSIONS) return;
+    for (const [key, entry] of this.sessions) {
+      if (this.sessions.size <= MAX_SESSIONS) break;
+      if (entry.pending || key === keepId || key === this.lastActiveConversationId) continue;
+      entry.baseMetrics = null;
+      entry.rawWeak = null;
+      entry.rawRev = null;
+      this.sessions.delete(key);
+    }
+  }
+  pruneBaseMetrics() {
+    const keepFrom = Math.max(0, this.sessions.size - MAX_RECENT_BASE_METRICS);
+    let idx = 0;
+    for (const entry of this.sessions.values()) {
+      const isRecent = idx >= keepFrom;
+      idx++;
+      if (!entry.baseMetrics) continue;
+      const rawDead = entry.rawWeak != null && entry.rawWeak.deref() === void 0;
+      if (rawDead || !isRecent && !entry.pending) {
+        entry.baseMetrics = null;
+        if (rawDead) {
+          entry.rawWeak = null;
+          entry.rawRev = null;
+        }
+      }
+    }
+  }
   async session(id, force = false) {
     if (!GUID.test(id)) throw new Error("\u4F1A\u8BDD\u6807\u8BC6\u65E0\u6548");
     let entry = this.sessions.get(id);
+    if (entry) {
+      this.touchSession(id, entry);
+    }
     if (entry?.pending) return entry.pending;
     const summaryState = this.summaryStates.get(id);
     const summaryChanged = Boolean(summaryState && entry?.polledSummaryFingerprint !== summaryState.fingerprint) || this.newlySettledSessionIds.has(id);
     if (!force && !summaryChanged && entry?.data && Date.now() - (entry.updatedAt ?? 0) < 1800) {
+      this.pruneBaseMetrics();
       return entry.data;
     }
     if (!entry) {
       entry = {};
       this.sessions.set(id, entry);
+      this.trimSessions(id);
     }
     entry.pending = runSessionPoll(this, id, entry, force).finally(() => {
       entry.pending = null;
+      this.trimSessions(id);
+      this.pruneBaseMetrics();
     });
     return entry.pending;
   }

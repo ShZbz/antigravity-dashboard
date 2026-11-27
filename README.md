@@ -7,7 +7,7 @@
 Token throughput, cache hits and context usage in the model selector row. Hover over context for five-hour and weekly quotas too.<br>
 Keep the summary visible. Hover for the details.
 
-[![Version 0.12.7](https://img.shields.io/badge/version-0.12.7-91adff?style=flat-square&labelColor=252936)](CHANGELOG.md)
+[![Version 0.12.8](https://img.shields.io/badge/version-0.12.8-91adff?style=flat-square&labelColor=252936)](CHANGELOG.md)
 [![Platforms](https://img.shields.io/badge/host-Windows%20%7C%20Linux%20%7C%20macOS-83d8b9?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
 [![Antigravity 2.21.1 - 2.35.1](https://img.shields.io/badge/Antigravity-2.21.1%20--%202.35.1-c5a0ff?style=flat-square&labelColor=252936)](COMPATIBILITY.md)
 [![MIT](https://img.shields.io/badge/license-MIT-d4d9e6?style=flat-square&labelColor=252936)](LICENSE)
@@ -21,6 +21,8 @@ Keep the summary visible. Hover for the details.
 
 > [!IMPORTANT]
 > **Rust Native Engine in `v0.12.0` (`pulse-accel`) & Fallback Guidance:** `v0.12.0` introduces an optional Rust N-API native engine (`pulse-accel`) that dramatically speeds up UI responsiveness, SQLite conversation backfills, ledger queries, transcript scanning, and SVG rendering while substantially reducing V8 heap memory usage. As this is a major new native engine, if you run into any unexpected glitches or regressions, please [open an issue](https://github.com/ShZbz/antigravity-dashboard/issues) promptly with reproduction details. You can immediately fall back to the pure TypeScript runtime by setting `PULSE_DISABLE_NATIVE_ACCEL=1` in the environment, or roll back to release **`v0.11.0`** if the issue prevents normal use.
+
+**v0.12.8:** Full-stack zero-UX-regression memory optimization — compact Rust ledger records (~39% lower native RSS), native multi-scope shared-file Project Stats deduplication (`readLedgerSharedProjectSummaries`, eliminating the +25–28 MiB V8 heap spike), and two-tier `releaseNativeCaches('soft' | 'full')`; lazy-loaded MCP Server (-68% startup RSS delta, `MetricsStore` decoupled, 90s idle cache teardown); Sidecar leak fixes (`fileIndex` native skip, 16-LRU `sessions`, SHA-256 write caches, 3m idle cache trimming keeping the full 8 MiB active budget, 60s health-write throttling, and lightweight `usageTotals` 2.2s CDP polling cutting poll RSS churn by ~98%); on-demand `focus-trap.ts` listeners restoring host compositor scrolling, and lazy `/usage-ui.js` splitting that shrinks `sidecars/panel/app.js` by 46.7%.
 
 **v0.12.7:** Add **Antigravity `v2.34.0+` MCP Apps** integration — open the full-width, full-page **Token Usage** dashboard directly from **Plugins → Token Usage** in the left sidebar with zero CDP debug flags and live host theme sync, backed by an on-demand zero-runtime-dependency stdio MCP server (`mcp/server.mjs`) and self-contained single-file HTML bundle (`mcp/apps/usage.html`) sharing the existing ledger and Rust native engine; expose read-only Agent query tools (`query_usage_stats`, `get_quota_and_session`), normalize `plugin.json` for `agy plugin validate --strict`, and add Windows rename-swap handling for locked `pulse-accel.node` updates during `manage.mjs install`.
 
@@ -98,7 +100,7 @@ Keep the summary visible. Hover for the details.
 ## Antigravity IDE
 
 **v0.7.0+** includes a separate VSIX for Google's standalone Antigravity IDE. Download
-`antigrative-dashboard-ide-0.12.7.vsix` from the release and choose **Install from VSIX…**
+`antigrative-dashboard-ide-0.12.8.vsix` from the release and choose **Install from VSIX…**
 in the IDE's Extensions view. No desktop App installation is required.
 
 Fully quit the IDE, then start it with

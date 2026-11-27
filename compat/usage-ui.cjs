@@ -1909,36 +1909,7 @@ module.exports = function createUsageDashboard(...args) {
       const { dialog, view, state, $ } = ctx;
       const isFullpage = ctx.options.displayMode === "fullpage";
       const within = (event) => event.composedPath().includes(dialog);
-      const present = () => {
-        if (isFullpage) {
-          if (!dialog.hasAttribute("open")) dialog.setAttribute("open", "");
-          return;
-        }
-        if (dialog.matches(":popover-open")) return;
-        dialog.removeAttribute("open");
-        dialog.showPopover();
-        dialog.setAttribute("open", "");
-        $("locale")?.focus({ preventScroll: true });
-      };
-      const conceal = () => {
-        if (!isFullpage && dialog.matches(":popover-open")) dialog.hidePopover();
-        dialog.removeAttribute("open");
-      };
-      const close = () => {
-        handlers.onCloseYear(false);
-        handlers.onCloseSubPopovers?.();
-        const tip = $("tip");
-        if (tip) {
-          try {
-            if (typeof tip.hidePopover === "function" && tip.matches(":popover-open")) tip.hidePopover();
-          } catch {
-          }
-          tip.hidden = true;
-        }
-        if (isFullpage) return;
-        conceal();
-        state.opener?.focus({ preventScroll: true });
-      };
+      let listenersAttached = false;
       const containFocus = (event) => {
         if (!state.disposed && dialog.open && !within(event)) {
           $("locale")?.focus({ preventScroll: true });
@@ -1995,6 +1966,68 @@ module.exports = function createUsageDashboard(...args) {
           if (event.type === "click") close();
         }
       };
+      const attachDocumentListeners = () => {
+        if (listenersAttached) return;
+        listenersAttached = true;
+        if (!isFullpage) {
+          document.addEventListener("focusin", containFocus, true);
+          document.addEventListener("wheel", containScroll, { capture: true, passive: false });
+          document.addEventListener("touchmove", containScroll, { capture: true, passive: false });
+          for (const type of ["pointerdown", "mousedown", "click"]) {
+            document.addEventListener(type, containPointer, true);
+          }
+        }
+        document.addEventListener("keydown", containKeys, true);
+      };
+      const detachDocumentListeners = () => {
+        if (!listenersAttached) return;
+        listenersAttached = false;
+        document.removeEventListener("keydown", containKeys, true);
+        if (!isFullpage) {
+          document.removeEventListener("focusin", containFocus, true);
+          document.removeEventListener("wheel", containScroll, true);
+          document.removeEventListener("touchmove", containScroll, true);
+          for (const type of ["pointerdown", "mousedown", "click"]) {
+            document.removeEventListener(type, containPointer, true);
+          }
+        }
+      };
+      const present = () => {
+        if (isFullpage) {
+          if (!dialog.hasAttribute("open")) dialog.setAttribute("open", "");
+          attachDocumentListeners();
+          return;
+        }
+        if (dialog.matches(":popover-open")) {
+          attachDocumentListeners();
+          return;
+        }
+        dialog.removeAttribute("open");
+        dialog.showPopover();
+        dialog.setAttribute("open", "");
+        attachDocumentListeners();
+        $("locale")?.focus({ preventScroll: true });
+      };
+      const conceal = () => {
+        detachDocumentListeners();
+        if (!isFullpage && dialog.matches(":popover-open")) dialog.hidePopover();
+        dialog.removeAttribute("open");
+      };
+      const close = () => {
+        handlers.onCloseYear(false);
+        handlers.onCloseSubPopovers?.();
+        const tip = $("tip");
+        if (tip) {
+          try {
+            if (typeof tip.hidePopover === "function" && tip.matches(":popover-open")) tip.hidePopover();
+          } catch {
+          }
+          tip.hidden = true;
+        }
+        if (isFullpage) return;
+        conceal();
+        state.opener?.focus({ preventScroll: true });
+      };
       if (!isFullpage) {
         $("close")?.addEventListener("click", close);
         dialog.addEventListener("cancel", (event) => {
@@ -2009,28 +2042,12 @@ module.exports = function createUsageDashboard(...args) {
             }
           }
         });
-        document.addEventListener("focusin", containFocus, true);
-        document.addEventListener("wheel", containScroll, { capture: true, passive: false });
-        document.addEventListener("touchmove", containScroll, { capture: true, passive: false });
-        for (const type of ["pointerdown", "mousedown", "click"]) {
-          document.addEventListener(type, containPointer, true);
-        }
       }
-      document.addEventListener("keydown", containKeys, true);
       return {
         present,
         conceal,
         close,
         dispose() {
-          document.removeEventListener("keydown", containKeys, true);
-          if (!isFullpage) {
-            document.removeEventListener("focusin", containFocus, true);
-            document.removeEventListener("wheel", containScroll, true);
-            document.removeEventListener("touchmove", containScroll, true);
-            for (const type of ["pointerdown", "mousedown", "click"]) {
-              document.removeEventListener(type, containPointer, true);
-            }
-          }
           conceal();
         }
       };

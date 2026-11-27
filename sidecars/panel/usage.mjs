@@ -374,8 +374,8 @@ function usageRecords(raw, conversationId2) {
 // src/telemetry/ledger/storage.ts
 import { readFileSync as readFileSync2 } from "node:fs";
 import { mkdir as mkdir2, readdir, readFile as readFile2, rename as rename2, stat as stat2, unlink as unlink2, writeFile as writeFile2 } from "node:fs/promises";
-import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join as join2 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/shared/atomic-fs.ts
 import {
@@ -487,232 +487,11 @@ async function atomicWriteFile(file, data, options = {}) {
   }
 }
 
-// src/telemetry/ledger/storage.ts
-import { platformPaths } from "../../compat/platform.mjs";
-function loadKnownAccounts(file = fileURLToPath(new URL("../../.data/usage-accounts.local.json", import.meta.url))) {
-  try {
-    const val = JSON.parse(readFileSync2(file, "utf8"));
-    if (!val || typeof val !== "object" || Array.isArray(val)) return {};
-    const obj = val;
-    const raw = obj.accounts && typeof obj.accounts === "object" && !Array.isArray(obj.accounts) ? obj.accounts : obj;
-    return Object.fromEntries(
-      Object.entries(raw).filter(
-        ([k, v]) => HASH_RE.test(k) && Boolean(v) && typeof v === "object" && !Array.isArray(v)
-      )
-    );
-  } catch {
-    return {};
-  }
-}
-var KNOWN_ACCOUNTS = loadKnownAccounts();
-var LedgerStorage = class {
-  directory;
-  timeZone;
-  source;
-  knownAccounts;
-  fs;
-  hasCustomFs;
-  scope;
-  writeQueue = Promise.resolve();
-  revision = 0;
-  cache = null;
-  fileIndex = /* @__PURE__ */ new Map();
-  dirtyRelPaths = /* @__PURE__ */ new Set();
-  projectDirtyRelPaths = /* @__PURE__ */ new Set();
-  keyVersions = /* @__PURE__ */ new Map();
-  metaCache = null;
-  metaVersion = 0;
-  ownershipCache = null;
-  ownershipVersion = 0;
-  constructor(directory = join(platformPaths().data, "usage-v1"), { timeZone = "Asia/Shanghai", source = "desktop-local", knownAccounts = KNOWN_ACCOUNTS, fs = null } = {}) {
-    this.directory = directory;
-    this.timeZone = timeZone;
-    this.source = source;
-    this.knownAccounts = knownAccounts && typeof knownAccounts === "object" ? knownAccounts : {};
-    this.hasCustomFs = Boolean(fs);
-    this.fs = {
-      readFile: readFile2,
-      writeFile: writeFile2,
-      mkdir: mkdir2,
-      rename: rename2,
-      readdir,
-      unlink: unlink2,
-      stat: stat2,
-      ...fs || {}
-    };
-  }
-  get queue() {
-    return this.writeQueue;
-  }
-  enqueueWrite(fn) {
-    const run = () => fn();
-    const pending = this.writeQueue.then(run, run);
-    this.writeQueue = pending.catch(() => {
-    });
-    return pending;
-  }
-  async _stat(file) {
-    try {
-      return await this.fs.stat(file, { bigint: true });
-    } catch (error) {
-      if (isErrno(error, "ENOENT", "ENOTDIR")) return null;
-      if (error instanceof TypeError) {
-        try {
-          return await this.fs.stat(file);
-        } catch (retryError) {
-          if (isErrno(retryError, "ENOENT", "ENOTDIR")) return null;
-          throw retryError;
-        }
-      }
-      throw error;
-    }
-  }
-  async _atomicWrite(_dir, file, data) {
-    await atomicWriteFile(file, data, { fs: this.fs, mode: 384 });
-  }
-  _markDirtyRelPath(scope, name) {
-    const rel = `${scope}/${name}`;
-    this.dirtyRelPaths.add(rel);
-    this.projectDirtyRelPaths.add(rel);
-  }
-  _bumpKeyVersion(scope, name) {
-    const key = `${scope}/${name}`;
-    this.keyVersions.set(key, (this.keyVersions.get(key) || 0) + 1);
-  }
-  async _setFileIndexFromWrite(scope, name, file, record) {
-    this._bumpKeyVersion(scope, name);
-    this._markDirtyRelPath(scope, name);
-    let st = null;
-    try {
-      st = await this._stat(file);
-    } catch {
-    }
-    let scopeMap = this.fileIndex.get(scope);
-    if (!scopeMap) {
-      scopeMap = /* @__PURE__ */ new Map();
-      this.fileIndex.set(scope, scopeMap);
-    }
-    const stamp = formatStatStamp(st);
-    if (stamp) scopeMap.set(name, { stamp, unreadable: false, record, recordIds: uniqueRecordIds(record.records) });
-    else scopeMap.delete(name);
-    this.revision++;
-    this.cache = null;
-  }
-  file(scope, id) {
-    if (!HASH_RE.test(scope) || !GUID_RE.test(id)) throw Error("Invalid usage scope");
-    return join(this.directory, scope, `${sha256(id.toLowerCase())}.json`);
-  }
-  ownershipFile() {
-    return join(this.directory, "ownership-v1.json");
-  }
-  accountsFile() {
-    return join(this.directory, "accounts-v1.json");
-  }
-  projectMetaFile() {
-    return join(this.directory, "project-meta-v1.json");
-  }
-  async backfillState(scope, host) {
-    if (!HASH_RE.test(scope) || !["app", "ide"].includes(host)) throw Error("Invalid backfill scope");
-    try {
-      const content = await this.fs.readFile(join(this.directory, scope, "backfill-v1.json"), "utf8");
-      if (content.length > MAX_LEDGER_JSON_BYTES) return {};
-      const value = JSON.parse(content);
-      if (value.schema !== 1 || value.account !== scope || value.host !== host || !value.entries || typeof value.entries !== "object" || Array.isArray(value.entries)) {
-        return {};
-      }
-      return Object.fromEntries(
-        Object.entries(value.entries).filter(([id, e]) => {
-          if (!HASH_RE.test(id) || !e || typeof e !== "object") return false;
-          const entry = e;
-          return typeof entry.signature === "string" && HASH_RE.test(entry.signature) && (entry.state === "complete" || entry.state === "retry") && typeof entry.failures === "number" && Number.isSafeInteger(entry.failures) && entry.failures >= 0 && typeof entry.retryAt === "number" && Number.isSafeInteger(entry.retryAt) && entry.retryAt >= 0;
-        })
-      );
-    } catch (error) {
-      if (isErrno(error, "ENOENT") || error instanceof SyntaxError) return {};
-      throw error;
-    }
-  }
-  saveBackfillState(scope, host, entries) {
-    if (!HASH_RE.test(scope) || !["app", "ide"].includes(host)) throw Error("Invalid backfill scope");
-    const dir = join(this.directory, scope);
-    const file = join(dir, "backfill-v1.json");
-    return this.enqueueWrite(() => this._atomicWrite(dir, file, JSON.stringify({ schema: 1, account: scope, host, entries })));
-  }
-  async _loadStampCachedJson(file, getCache, setCache, getVersion, extract) {
-    const ver = getVersion();
-    const st = await this._stat(file);
-    const stamp = formatStatStamp(st) ?? "ENOENT";
-    const cached = getCache();
-    if (cached && cached.stamp === stamp) return { stamp, value: { ...cached.value } };
-    let value = {};
-    if (st) {
-      try {
-        const content = await this.fs.readFile(file, "utf8");
-        if (content.length <= MAX_LEDGER_JSON_BYTES) {
-          const parsed = JSON.parse(content);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) value = extract(parsed);
-        }
-      } catch (error) {
-        if (!isErrno(error, "ENOENT") && !(error instanceof SyntaxError)) throw error;
-      }
-    }
-    if (getVersion() === ver) setCache({ stamp, value });
-    return { stamp, value: { ...value } };
-  }
-  async scopeDirectories() {
-    const scopes = [];
-    try {
-      const entries = await this.fs.readdir(this.directory, { withFileTypes: true });
-      for (const entry of entries) if (entry.isDirectory() && HASH_RE.test(entry.name)) scopes.push(entry.name);
-    } catch (error) {
-      if (!isErrno(error, "ENOENT")) throw error;
-    }
-    scopes.sort();
-    return scopes;
-  }
-  ingestRows(scope, id, rows) {
-    if (!scope) return Promise.resolve();
-    const file = this.file(scope, id);
-    const fileName = basename(file);
-    return this.enqueueWrite(async () => {
-      let previous;
-      try {
-        previous = JSON.parse(await this.fs.readFile(file, "utf8"));
-      } catch (error) {
-        if (!isErrno(error, "ENOENT")) throw Error("Usage ledger cannot be read");
-      }
-      if (previous && (previous.schema !== 1 || previous.account !== scope || !Array.isArray(previous.records) || !previous.records.every(validRow))) {
-        throw Error("Invalid usage ledger");
-      }
-      const merged = new Map((previous?.records || []).map((r) => [r.id, r]));
-      for (const row of rows) {
-        const old = merged.get(row.id);
-        const record = {
-          ...row,
-          at: row.at ?? old?.at ?? null,
-          timeBasis: row.at === null && old?.at !== null && old?.at !== void 0 ? old.timeBasis : row.timeBasis
-        };
-        for (const key of RECORD_KEYS) record[key] = row[key] ?? old?.[key] ?? null;
-        merged.set(row.id, record);
-      }
-      const records = [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
-      if (previous && JSON.stringify(previous.records) === JSON.stringify(records)) return;
-      const nextDoc = { schema: 1, account: scope, records };
-      this._markDirtyRelPath(scope, fileName);
-      await this._atomicWrite(join(this.directory, scope), file, JSON.stringify(nextDoc));
-      await this._setFileIndexFromWrite(scope, fileName, file, nextDoc);
-    });
-  }
-};
-
-// src/telemetry/ledger/summary.ts
-import { join as join5 } from "node:path";
-
 // src/platform/native-bridge.ts
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname2, join as join2, resolve } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { dirname as dirname2, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 var cachedAddon = null;
 var cachedPath = null;
 var cachedEnvPath = null;
@@ -737,7 +516,7 @@ function getAddonRequire() {
     }
   }
   try {
-    return createRequire(join2(process.cwd(), "package.json"));
+    return createRequire(join(process.cwd(), "package.json"));
   } catch {
     return null;
   }
@@ -746,7 +525,7 @@ function platformAddonFilename(platform = process.platform, arch = process.arch)
   return `pulse-accel.${platform}-${arch}.node`;
 }
 function addonSearchBases(dir) {
-  return [join2(dir, platformAddonFilename()), join2(dir, "pulse-accel.node")];
+  return [join(dir, platformAddonFilename()), join(dir, "pulse-accel.node")];
 }
 function candidateAddonPaths() {
   const envPath = process.env.PULSE_ACCEL_PATH?.trim();
@@ -757,17 +536,17 @@ function candidateAddonPaths() {
   const metaUrl = resolveImportMetaUrl();
   if (metaUrl) {
     try {
-      const here = dirname2(fileURLToPath2(metaUrl));
+      const here = dirname2(fileURLToPath(metaUrl));
       candidates.push(
         ...addonSearchBases(here),
-        ...addonSearchBases(join2(here, "..", "sidecars", "panel")),
-        ...addonSearchBases(join2(here, "..", "..", "sidecars", "panel"))
+        ...addonSearchBases(join(here, "..", "sidecars", "panel")),
+        ...addonSearchBases(join(here, "..", "..", "sidecars", "panel"))
       );
     } catch {
     }
   }
   try {
-    candidates.push(...addonSearchBases(join2(process.cwd(), "sidecars", "panel")));
+    candidates.push(...addonSearchBases(join(process.cwd(), "sidecars", "panel")));
   } catch {
   }
   return [...new Set(candidates)];
@@ -880,6 +659,249 @@ function readLedgerProjectSummaries(query) {
     (parsed) => Array.isArray(parsed.files)
   );
 }
+function readLedgerSharedProjectSummaries(query) {
+  if (!query?.directory || !query?.scope || !query?.zeroAtDate) return null;
+  const payload = {
+    ...query,
+    knownAccounts: query.knownAccounts ?? {},
+    dirtyRelPaths: query.dirtyRelPaths ?? []
+  };
+  return callSingleJsonAddon(
+    "readLedgerSharedProjectSummariesJson",
+    payload,
+    (parsed) => Array.isArray(parsed.files)
+  );
+}
+
+// src/telemetry/ledger/storage.ts
+import { platformPaths } from "../../compat/platform.mjs";
+function loadKnownAccounts(file = fileURLToPath2(new URL("../../.data/usage-accounts.local.json", import.meta.url))) {
+  try {
+    const val = JSON.parse(readFileSync2(file, "utf8"));
+    if (!val || typeof val !== "object" || Array.isArray(val)) return {};
+    const obj = val;
+    const raw = obj.accounts && typeof obj.accounts === "object" && !Array.isArray(obj.accounts) ? obj.accounts : obj;
+    return Object.fromEntries(
+      Object.entries(raw).filter(
+        ([k, v]) => HASH_RE.test(k) && Boolean(v) && typeof v === "object" && !Array.isArray(v)
+      )
+    );
+  } catch {
+    return {};
+  }
+}
+var KNOWN_ACCOUNTS = loadKnownAccounts();
+var LedgerStorage = class {
+  directory;
+  timeZone;
+  source;
+  knownAccounts;
+  fs;
+  hasCustomFs;
+  scope;
+  writeQueue = Promise.resolve();
+  revision = 0;
+  lastUsageActivityAt = 0;
+  cache = null;
+  fileIndex = /* @__PURE__ */ new Map();
+  dirtyRelPaths = /* @__PURE__ */ new Set();
+  projectDirtyRelPaths = /* @__PURE__ */ new Set();
+  keyVersions = /* @__PURE__ */ new Map();
+  metaCache = null;
+  metaVersion = 0;
+  ownershipCache = null;
+  ownershipVersion = 0;
+  constructor(directory = join2(platformPaths().data, "usage-v1"), { timeZone = "Asia/Shanghai", source = "desktop-local", knownAccounts = KNOWN_ACCOUNTS, fs = null } = {}) {
+    this.directory = directory;
+    this.timeZone = timeZone;
+    this.source = source;
+    this.knownAccounts = knownAccounts && typeof knownAccounts === "object" ? knownAccounts : {};
+    this.hasCustomFs = Boolean(fs);
+    this.fs = {
+      readFile: readFile2,
+      writeFile: writeFile2,
+      mkdir: mkdir2,
+      rename: rename2,
+      readdir,
+      unlink: unlink2,
+      stat: stat2,
+      ...fs || {}
+    };
+  }
+  get queue() {
+    return this.writeQueue;
+  }
+  touchUsageActivity(now = Date.now()) {
+    if (now > this.lastUsageActivityAt) this.lastUsageActivityAt = now;
+  }
+  enqueueWrite(fn) {
+    this.touchUsageActivity();
+    const run = () => fn();
+    const pending = this.writeQueue.then(run, run);
+    this.writeQueue = pending.catch(() => {
+    });
+    return pending;
+  }
+  async _stat(file) {
+    try {
+      return await this.fs.stat(file, { bigint: true });
+    } catch (error) {
+      if (isErrno(error, "ENOENT", "ENOTDIR")) return null;
+      if (error instanceof TypeError) {
+        try {
+          return await this.fs.stat(file);
+        } catch (retryError) {
+          if (isErrno(retryError, "ENOENT", "ENOTDIR")) return null;
+          throw retryError;
+        }
+      }
+      throw error;
+    }
+  }
+  async _atomicWrite(_dir, file, data) {
+    await atomicWriteFile(file, data, { fs: this.fs, mode: 384 });
+  }
+  _markDirtyRelPath(scope, name) {
+    const rel = `${scope}/${name}`;
+    this.dirtyRelPaths.add(rel);
+    this.projectDirtyRelPaths.add(rel);
+    this.touchUsageActivity();
+  }
+  _bumpKeyVersion(scope, name) {
+    const key = `${scope}/${name}`;
+    this.keyVersions.set(key, (this.keyVersions.get(key) || 0) + 1);
+    this.touchUsageActivity();
+  }
+  async _setFileIndexFromWrite(scope, name, file, record) {
+    this._bumpKeyVersion(scope, name);
+    this._markDirtyRelPath(scope, name);
+    if (this.hasCustomFs || !isNativeAccelAvailable()) {
+      let st = null;
+      try {
+        st = await this._stat(file);
+      } catch {
+      }
+      let scopeMap = this.fileIndex.get(scope);
+      if (!scopeMap) {
+        scopeMap = /* @__PURE__ */ new Map();
+        this.fileIndex.set(scope, scopeMap);
+      }
+      const stamp = formatStatStamp(st);
+      if (stamp) scopeMap.set(name, { stamp, unreadable: false, record, recordIds: uniqueRecordIds(record.records) });
+      else scopeMap.delete(name);
+    }
+    this.revision++;
+    this.cache = null;
+  }
+  file(scope, id) {
+    if (!HASH_RE.test(scope) || !GUID_RE.test(id)) throw Error("Invalid usage scope");
+    return join2(this.directory, scope, `${sha256(id.toLowerCase())}.json`);
+  }
+  ownershipFile() {
+    return join2(this.directory, "ownership-v1.json");
+  }
+  accountsFile() {
+    return join2(this.directory, "accounts-v1.json");
+  }
+  projectMetaFile() {
+    return join2(this.directory, "project-meta-v1.json");
+  }
+  async backfillState(scope, host) {
+    if (!HASH_RE.test(scope) || !["app", "ide"].includes(host)) throw Error("Invalid backfill scope");
+    try {
+      const content = await this.fs.readFile(join2(this.directory, scope, "backfill-v1.json"), "utf8");
+      if (content.length > MAX_LEDGER_JSON_BYTES) return {};
+      const value = JSON.parse(content);
+      if (value.schema !== 1 || value.account !== scope || value.host !== host || !value.entries || typeof value.entries !== "object" || Array.isArray(value.entries)) {
+        return {};
+      }
+      return Object.fromEntries(
+        Object.entries(value.entries).filter(([id, e]) => {
+          if (!HASH_RE.test(id) || !e || typeof e !== "object") return false;
+          const entry = e;
+          return typeof entry.signature === "string" && HASH_RE.test(entry.signature) && (entry.state === "complete" || entry.state === "retry") && typeof entry.failures === "number" && Number.isSafeInteger(entry.failures) && entry.failures >= 0 && typeof entry.retryAt === "number" && Number.isSafeInteger(entry.retryAt) && entry.retryAt >= 0;
+        })
+      );
+    } catch (error) {
+      if (isErrno(error, "ENOENT") || error instanceof SyntaxError) return {};
+      throw error;
+    }
+  }
+  saveBackfillState(scope, host, entries) {
+    if (!HASH_RE.test(scope) || !["app", "ide"].includes(host)) throw Error("Invalid backfill scope");
+    const dir = join2(this.directory, scope);
+    const file = join2(dir, "backfill-v1.json");
+    return this.enqueueWrite(() => this._atomicWrite(dir, file, JSON.stringify({ schema: 1, account: scope, host, entries })));
+  }
+  async _loadStampCachedJson(file, getCache, setCache, getVersion, extract) {
+    const ver = getVersion();
+    const st = await this._stat(file);
+    const stamp = formatStatStamp(st) ?? "ENOENT";
+    const cached = getCache();
+    if (cached && cached.stamp === stamp) return { stamp, value: { ...cached.value } };
+    let value = {};
+    if (st) {
+      try {
+        const content = await this.fs.readFile(file, "utf8");
+        if (content.length <= MAX_LEDGER_JSON_BYTES) {
+          const parsed = JSON.parse(content);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) value = extract(parsed);
+        }
+      } catch (error) {
+        if (!isErrno(error, "ENOENT") && !(error instanceof SyntaxError)) throw error;
+      }
+    }
+    if (getVersion() === ver) setCache({ stamp, value });
+    return { stamp, value: { ...value } };
+  }
+  async scopeDirectories() {
+    const scopes = [];
+    try {
+      const entries = await this.fs.readdir(this.directory, { withFileTypes: true });
+      for (const entry of entries) if (entry.isDirectory() && HASH_RE.test(entry.name)) scopes.push(entry.name);
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) throw error;
+    }
+    scopes.sort();
+    return scopes;
+  }
+  ingestRows(scope, id, rows) {
+    if (!scope) return Promise.resolve();
+    const file = this.file(scope, id);
+    const fileName = basename(file);
+    return this.enqueueWrite(async () => {
+      let previous;
+      try {
+        previous = JSON.parse(await this.fs.readFile(file, "utf8"));
+      } catch (error) {
+        if (!isErrno(error, "ENOENT")) throw Error("Usage ledger cannot be read");
+      }
+      if (previous && (previous.schema !== 1 || previous.account !== scope || !Array.isArray(previous.records) || !previous.records.every(validRow))) {
+        throw Error("Invalid usage ledger");
+      }
+      const merged = new Map((previous?.records || []).map((r) => [r.id, r]));
+      for (const row of rows) {
+        const old = merged.get(row.id);
+        const record = {
+          ...row,
+          at: row.at ?? old?.at ?? null,
+          timeBasis: row.at === null && old?.at !== null && old?.at !== void 0 ? old.timeBasis : row.timeBasis
+        };
+        for (const key of RECORD_KEYS) record[key] = row[key] ?? old?.[key] ?? null;
+        merged.set(row.id, record);
+      }
+      const records = [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
+      if (previous && JSON.stringify(previous.records) === JSON.stringify(records)) return;
+      const nextDoc = { schema: 1, account: scope, records };
+      this._markDirtyRelPath(scope, fileName);
+      await this._atomicWrite(join2(this.directory, scope), file, JSON.stringify(nextDoc));
+      await this._setFileIndexFromWrite(scope, fileName, file, nextDoc);
+    });
+  }
+};
+
+// src/telemetry/ledger/summary.ts
+import { join as join5 } from "node:path";
 
 // src/telemetry/ledger/accounts.ts
 import { join as join3 } from "node:path";
@@ -2575,7 +2597,7 @@ async function loadSharedFileSummariesJs(params) {
       }
     }
   }
-  const readResults = await mapPool(tasks, 16, async (task) => {
+  const readResults = await mapPool(tasks, 4, async (task) => {
     const res = await readValidatedLedgerDoc(ledger, task.scope, task.filePath);
     if (!res.transientError) {
       ledger.projectDirtyRelPaths.delete(`${task.scope}/${task.fileHash}.json`);
@@ -2683,6 +2705,58 @@ async function loadSharedFileSummariesJs(params) {
     );
   }
   return summaries;
+}
+function tryReadNativeSharedSummaries(params) {
+  const { ledger, queryScope, scanScopes, scopesByHash, targetHashes, timeZone, zeroAtDate } = params;
+  if (ledger.hasCustomFs || !isNativeAccelAvailable()) return null;
+  if (targetHashes.size === 0) return [];
+  const sortedHashes = [...targetHashes].sort();
+  const dirtySnapshot = [...ledger.projectDirtyRelPaths];
+  const tzSpec = resolveTimeZoneSpec(timeZone, Date.now());
+  const res = readLedgerSharedProjectSummaries({
+    directory: ledger.directory,
+    scope: queryScope,
+    timeZone,
+    ...tzSpec,
+    zeroAtDate,
+    knownAccounts: ledger.knownAccounts || {},
+    fallbackScope: ledger.scope ?? null,
+    targetHashes: sortedHashes,
+    dirtyRelPaths: dirtySnapshot
+  });
+  if (!res) return null;
+  if (dirtySnapshot.length > 0) {
+    const dirtySet = new Set(dirtySnapshot);
+    for (const s of scanScopes) {
+      for (const fileHash of sortedHashes) {
+        if (scopesByHash.get(fileHash)?.includes(s)) {
+          const rel = `${s}/${fileHash}.json`;
+          if (dirtySet.has(rel)) {
+            ledger.projectDirtyRelPaths.delete(rel);
+          }
+        }
+      }
+    }
+  }
+  return res.files;
+}
+async function loadSharedFileSummaries(params) {
+  const nativeShared = tryReadNativeSharedSummaries({
+    ledger: params.ledger,
+    queryScope: params.queryScope,
+    scanScopes: params.scanScopes,
+    scopesByHash: params.scopesByHash,
+    targetHashes: params.targetHashes,
+    timeZone: params.timeZone,
+    zeroAtDate: params.zeroAtDate
+  });
+  if (nativeShared) return nativeShared;
+  const accountsMeta = await params.ledger.accountsMeta().catch(() => ({}));
+  return await loadSharedFileSummariesJs({
+    ...params,
+    meta: accountsMeta,
+    knownAccounts: params.ledger.knownAccounts || {}
+  });
 }
 function resolveProjectForSummary(resolver, cid, file) {
   if (file.source === "remote-manual") {
@@ -2823,8 +2897,7 @@ async function queryProjectUsageOverview(opts) {
     }
   }
   if (targetSharedHashes.size > 0) {
-    const accountsMeta = await opts.ledger.accountsMeta().catch(() => ({}));
-    const sharedSummaries = await loadSharedFileSummariesJs({
+    const sharedSummaries = await loadSharedFileSummaries({
       ledger: opts.ledger,
       queryScope: scope,
       targetSet: plan.targetSet,
@@ -2832,8 +2905,6 @@ async function queryProjectUsageOverview(opts) {
       scopesByHash: plan.scopesByHash,
       targetHashes: targetSharedHashes,
       ownerByHash,
-      meta: accountsMeta,
-      knownAccounts: opts.ledger.knownAccounts || {},
       timeZone,
       zeroAtDate
     });
@@ -2992,8 +3063,7 @@ async function queryProjectConversationDetail(opts) {
     }
   }
   if (targetSharedHashes.size > 0) {
-    const accountsMeta = await opts.ledger.accountsMeta().catch(() => ({}));
-    const sharedSummaries = await loadSharedFileSummariesJs({
+    const sharedSummaries = await loadSharedFileSummaries({
       ledger: opts.ledger,
       queryScope: scope,
       targetSet: plan.targetSet,
@@ -3001,8 +3071,6 @@ async function queryProjectConversationDetail(opts) {
       scopesByHash: plan.scopesByHash,
       targetHashes: targetSharedHashes,
       ownerByHash,
-      meta: accountsMeta,
-      knownAccounts: opts.ledger.knownAccounts || {},
       timeZone,
       zeroAtDate
     });
@@ -3354,6 +3422,7 @@ var DesktopUsage = class {
   continuation = null;
   pending = null;
   lastPersistedRawSummaries = null;
+  totalsCache = null;
   constructor(store, ledger = new UsageLedger(), {
     host = null,
     conversationsDir = null,
@@ -3594,8 +3663,8 @@ var DesktopUsage = class {
     ).length;
     return { current, completed: true, missing: missing + this.passFailures.size, confirmed, retrying: missing + this.passFailures.size - confirmed, more };
   }
-  async snapshot() {
-    const targetScope = this.viewScope || "all";
+  prepareSyncAndScope(scopeOverride) {
+    const targetScope = scopeOverride || this.viewScope || "all";
     if (!targetScope && !this.store?.identity) return null;
     if (this.store?.identity && (this.scope !== this.store.identity || this.scopeEpoch !== this.store.epoch)) {
       this.lastSync = 0;
@@ -3606,8 +3675,50 @@ var DesktopUsage = class {
       if (this.pending) this.forceQueued = true;
     }
     if (this.store?.identity && this.now() - this.lastSync > 6e4 && !this.continuation) void this.sync();
-    const scope = targetScope;
+    return targetScope;
+  }
+  async totalsSnapshot(scope, now = Date.now()) {
+    const effectiveScope = this.prepareSyncAndScope(scope);
+    if (!effectiveScope || !HASH_RE.test(effectiveScope) && effectiveScope !== "all") return null;
+    const today = dateKey(now, this.ledger.timeZone);
+    const startRevision = this.ledger.revision;
+    const cached = this.totalsCache;
+    if (cached && cached.revision === startRevision && cached.today === today && cached.scope === effectiveScope && cached.timeZone === this.ledger.timeZone) {
+      return cached.value;
+    }
+    this.ledger.touchUsageActivity?.(Date.now());
+    const value = await this.ledger.summary(effectiveScope, now);
+    if (!value) return null;
+    const totals = {
+      todayTokens: value.todayTokens,
+      monthTokens: value.monthTokens
+    };
+    if (this.ledger.revision === startRevision) {
+      this.totalsCache = {
+        revision: startRevision,
+        today,
+        scope: effectiveScope,
+        timeZone: value.timeZone || this.ledger.timeZone,
+        value: totals
+      };
+    }
+    return totals;
+  }
+  async snapshot() {
+    const scope = this.prepareSyncAndScope();
+    if (!scope) return null;
+    this.ledger.touchUsageActivity?.(Date.now());
+    const startRevision = this.ledger.revision;
     const [value, accounts] = await Promise.all([this.ledger.summary(scope), this.ledger.getAccounts(scope)]);
+    if (value && this.ledger.revision === startRevision) {
+      this.totalsCache = {
+        revision: startRevision,
+        today: value.today,
+        scope,
+        timeZone: value.timeZone || this.ledger.timeZone,
+        value: { todayTokens: value.todayTokens, monthTokens: value.monthTokens }
+      };
+    }
     return value ? {
       ...value,
       viewScope: scope,
@@ -3630,9 +3741,11 @@ var DesktopUsage = class {
     return await this.ledger.deleteManualUsage(scope, id);
   }
   async getAccounts() {
+    this.ledger.touchUsageActivity?.(Date.now());
     return await this.ledger.getAccounts(this.viewScope || "all");
   }
   async getRecordingAccountState() {
+    this.ledger.touchUsageActivity?.(Date.now());
     const [selected, accounts] = await Promise.all([
       this.ledger.getActiveLocalAccount(),
       this.ledger.getAccounts(this.store?.identity || null)
@@ -3692,6 +3805,7 @@ var DesktopUsage = class {
   dispose() {
     this.disposed = true;
     this.forceQueued = false;
+    this.totalsCache = null;
     if (this.continuation !== null) clearTimeout(this.continuation);
     this.continuation = null;
   }

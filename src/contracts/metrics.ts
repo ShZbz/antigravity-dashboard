@@ -331,6 +331,14 @@ export interface ConversationSummary {
 }
 
 /**
+ * Lightweight today/month token totals attached to compact polling snapshots.
+ */
+export interface UsageTotalsSnapshot {
+  todayTokens: number;
+  monthTokens: number;
+}
+
+/**
  * Top-level payload served by `/api/metrics`, `ag-pulse:metrics`, and `RuntimeUi`.
  */
 export interface MetricsSnapshot {
@@ -346,6 +354,7 @@ export interface MetricsSnapshot {
   source?: string;
   enabled?: boolean;
   usage?: UsageSummarySnapshot | null;
+  usageTotals?: UsageTotalsSnapshot | null;
   preferences?: PreferencesSnapshot;
   theme?: HostThemeConfig;
   integration?: IntegrationHealth;

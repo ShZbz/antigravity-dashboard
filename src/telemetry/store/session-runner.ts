@@ -24,6 +24,9 @@ export interface SessionRunnerHost extends AncestorResolutionHost {
   quotaDirtyAt?: number;
   quotaSettledAt?: number;
   onTrajectory: ((scope: string, id: string, raw: unknown) => Promise<unknown> | unknown) | null;
+  touchSession?: (id: string, entry: SessionEntry) => void;
+  trimSessions?: (keepId?: string | null) => void;
+  pruneBaseMetrics?: () => void;
 }
 
 export interface QuotaRefreshHost {
@@ -108,6 +111,7 @@ export async function loadCachedSession(host: SessionRunnerHost, id: string, gui
   const epoch = host.epoch;
   const entry = host.sessions.get(id);
   if (entry?.data && usableMetrics(entry.data)) {
+    host.touchSession?.(id, entry);
     let modelTimeline = host.modelTimelineEnabled ? entry.data.modelTimeline || null : null;
     if (host.modelTimelineEnabled && !modelTimeline && host.timelineStore) {
       modelTimeline = await host.timelineStore.load(scope, id).catch(() => null);
@@ -124,6 +128,8 @@ export async function loadCachedSession(host: SessionRunnerHost, id: string, gui
   const restored: SpeedMetrics = { ...saved.metrics, modelTimeline };
   if (!host.sessions.has(id)) {
     host.sessions.set(id, { data: restored, savedAt: saved.savedAt, updatedAt: 0, withTimeline: host.modelTimelineEnabled });
+    host.trimSessions?.(id);
+    host.pruneBaseMetrics?.();
   }
   return { ...restored, transcriptRestoredFromHistory: !!saved.metrics.transcriptStats, restoredFromHistory: true, savedAt: saved.savedAt };
 }
@@ -273,6 +279,8 @@ export async function runSessionPoll(
       if (!current()) throw new Error('后台已重新连接，请等待刷新');
       if (sameTranscriptStats(nextTranscript, prev.transcriptStats) && sameTaskUsage(nextTaskUsage, prev.taskUsage) && sameStringList(nextDelegated, prev.delegatedConversations)) {
         entry.updatedAt = Date.now();
+        host.touchSession?.(id, entry);
+        host.pruneBaseMetrics?.();
         markSessionSummaryPolled(host, id, entry);
         return prev;
       }
@@ -283,6 +291,8 @@ export async function runSessionPoll(
       const modelTimeline = await saveSessionTimeline(host, scope, id, raw, entry.baseMetrics!);
       entry.data = { ...reconcileMetrics(prev, fresh, entry.savedAt || null), conversationId: id, modelTimeline };
       entry.updatedAt = Date.now();
+      host.touchSession?.(id, entry);
+      host.pruneBaseMetrics?.();
       await persistSessionHistory(host, scope, id, entry, current);
       if (!current()) throw new Error('后台已重新连接，请等待刷新');
       markSessionSummaryPolled(host, id, entry);
@@ -323,6 +333,8 @@ export async function runSessionPoll(
     entry.rawRev = readerRev;
     entry.withTimeline = timelineEnabled;
     entry.baseMetrics = readerRev !== null ? baseMetrics : null;
+    host.touchSession?.(id, entry);
+    host.pruneBaseMetrics?.();
     await persistSessionHistory(host, scope, id, entry, current);
     if (!current()) throw new Error('后台已重新连接，请等待刷新');
     markSessionSummaryPolled(host, id, entry);

@@ -32,6 +32,9 @@ import type {
   TrajectorySummaryLike,
 } from './types.ts';
 
+const INACTIVE_IDLE_BYTES_CAP = 2 * 1024 * 1024;
+type TimestampedTrajectoryEntry = TrajectoryCacheEntry & { lastAccessedAt?: number };
+
 export interface TrajectoryReaderOptions {
   budgetBytes?: number;
   idleRecheckMs?: number;
@@ -125,6 +128,14 @@ export class TrajectoryReader implements RemoteReaderHost {
     this.summaryAt = at;
   }
 
+  private currentNow(): number {
+    return typeof this.client?.now === 'function' ? this.client.now() : Date.now();
+  }
+
+  private touchEntry(entry: TrajectoryCacheEntry): void {
+    (entry as TimestampedTrajectoryEntry).lastAccessedAt = this.currentNow();
+  }
+
   trim(keep?: string): void {
     for (const [key, e] of this.entries) {
       if (this.cachedBytes <= this.budgetBytes) break;
@@ -132,6 +143,43 @@ export class TrajectoryReader implements RemoteReaderHost {
       this.cachedBytes -= e.bytes;
       this.entries.delete(key);
     }
+  }
+
+  trimIdle(maxAgeMs = 180_000, keepIds?: ReadonlySet<string>): number {
+    const now = this.currentNow();
+    const isKept = (key: string): boolean =>
+      Boolean(keepIds && (keepIds.has(key) || keepIds.has(key.toLowerCase())));
+    let evicted = 0;
+
+    for (const [key, e] of [...this.entries]) {
+      if (isKept(key) || e.pending || e.backfilling) continue;
+      const accessedAt = (e as TimestampedTrajectoryEntry).lastAccessedAt ?? e.verifiedAt ?? 0;
+      if (now - accessedAt >= maxAgeMs) {
+        this.cachedBytes = Math.max(0, this.cachedBytes - e.bytes);
+        this.entries.delete(key);
+        evicted++;
+      }
+    }
+
+    const inactiveCap = Math.min(this.budgetBytes, INACTIVE_IDLE_BYTES_CAP);
+    let inactiveBytes = 0;
+    for (const [key, e] of this.entries) {
+      if (!isKept(key) && !e.pending && !e.backfilling) {
+        inactiveBytes += e.bytes;
+      }
+    }
+    if (inactiveBytes > inactiveCap) {
+      for (const [key, e] of [...this.entries]) {
+        if (inactiveBytes <= inactiveCap) break;
+        if (isKept(key) || e.pending || e.backfilling) continue;
+        inactiveBytes -= e.bytes;
+        this.cachedBytes = Math.max(0, this.cachedBytes - e.bytes);
+        this.entries.delete(key);
+        evicted++;
+      }
+    }
+
+    return evicted;
   }
 
   async summary(id: string, provided?: TrajectorySummaryLike, force = false): Promise<TrajectorySummaryLike> {
@@ -187,11 +235,15 @@ export class TrajectoryReader implements RemoteReaderHost {
       this.endpoint = endpoint;
     }
     let entry = this.entries.get(id);
-    if (entry?.pending) return entry.pending;
+    if (entry?.pending) {
+      this.touchEntry(entry);
+      return entry.pending;
+    }
     if (!entry) {
       entry = { data: null, bytes: 0, withTimeline: false };
       this.entries.set(id, entry);
     }
+    this.touchEntry(entry);
     const epoch = this.epoch;
     const current = (): boolean => epoch === this.epoch && this.entries.get(id) === entry && isCurrent();
     const assertCurrent = (): void => { if (!current()) throw unavailable(); };
@@ -203,6 +255,7 @@ export class TrajectoryReader implements RemoteReaderHost {
     ).finally(() => {
       activeEntry.pending = null;
       if (!activeEntry.data && current()) this.entries.delete(id);
+      else if (activeEntry.data && current()) this.touchEntry(activeEntry);
       if (current()) this.trim(id);
     });
     return activeEntry.pending;
@@ -299,7 +352,8 @@ export class TrajectoryReader implements RemoteReaderHost {
     if (!stamp) throw new Error('会话暂时没有可用统计');
     const mark = `sqlite:${stamp}`;
     if (!force && entry.data && entry.withTimeline === wantTimeline && entry.mark === mark) {
-      entry.verifiedAt = this.client.now();
+      entry.verifiedAt = this.currentNow();
+      this.touchEntry(entry);
       this.entries.delete(id);
       this.entries.set(id, entry);
       return entry.data;
@@ -338,7 +392,8 @@ export class TrajectoryReader implements RemoteReaderHost {
     entry.mark = mark;
     entry.withTimeline = wantTimeline;
     entry.rev = (entry.rev || 0) + 1;
-    entry.verifiedAt = this.client.now();
+    entry.verifiedAt = this.currentNow();
+    this.touchEntry(entry);
     this.entries.delete(id);
     this.entries.set(id, entry);
     this.trim(id);
@@ -367,8 +422,9 @@ export class TrajectoryReader implements RemoteReaderHost {
             !force &&
             entry.data &&
             entry.withTimeline === wantTimeline &&
-            this.client.now() - (entry.verifiedAt ?? 0) < this.idleRecheckMs
+            this.currentNow() - (entry.verifiedAt ?? 0) < this.idleRecheckMs
           ) {
+            this.touchEntry(entry);
             this.entries.delete(id);
             this.entries.set(id, entry);
             return entry.data;
@@ -383,7 +439,8 @@ export class TrajectoryReader implements RemoteReaderHost {
               };
               const synthMark = JSON.stringify([sqliteVal.numTotalSteps, undefined, sqliteVal.status, undefined]);
               if (!force && entry.data && entry.withTimeline === wantTimeline && entry.mark === synthMark) {
-                entry.verifiedAt = this.client.now();
+                entry.verifiedAt = this.currentNow();
+                this.touchEntry(entry);
                 this.entries.delete(id);
                 this.entries.set(id, entry);
                 return entry.data;
@@ -407,7 +464,8 @@ export class TrajectoryReader implements RemoteReaderHost {
     const old = entry.data;
     const timelineModeMismatch = Boolean(old) && entry.withTimeline !== wantTimeline;
     const same = Boolean(old) && !timelineModeMismatch && entry.mark === mark;
-    if (!force && same && old && settled(resolvedSummary.status) && resolvedSummary.lastModifiedTime && this.client.now() - (entry.verifiedAt ?? 0) < this.idleRecheckMs) {
+    if (!force && same && old && settled(resolvedSummary.status) && resolvedSummary.lastModifiedTime && this.currentNow() - (entry.verifiedAt ?? 0) < this.idleRecheckMs) {
+      this.touchEntry(entry);
       this.entries.delete(id); this.entries.set(id, entry); return old;
     }
     const isRunning = Boolean(resolvedSummary.status && !settled(resolvedSummary.status));
@@ -501,7 +559,8 @@ export class TrajectoryReader implements RemoteReaderHost {
     assertCurrent();
     this.cachedBytes -= entry.bytes; entry.bytes = bytes; this.cachedBytes += bytes;
     entry.data = value; entry.summary = resolvedSummary; entry.mark = mark; entry.withTimeline = wantTimeline;
-    entry.rev = (entry.rev || 0) + 1; entry.verifiedAt = this.client.now();
+    entry.rev = (entry.rev || 0) + 1; entry.verifiedAt = this.currentNow();
+    this.touchEntry(entry);
     this.entries.delete(id); this.entries.set(id, entry); this.trim(id);
     return value;
   }

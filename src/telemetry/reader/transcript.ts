@@ -32,7 +32,10 @@ export interface TranscriptReaderOptions {
   bytesPerPass?: number;
   passMs?: number;
   nativeScan?: ((inputJson: string) => string | null) | null;
+  now?: () => number;
 }
+
+type TimestampedTranscriptEntry = TranscriptEntry & { lastAccessedAt?: number };
 
 interface NativeScanAnchor {
   offset?: unknown;
@@ -126,20 +129,23 @@ export class TranscriptReader {
   bytesPerPass: number;
   passMs: number;
   nativeScan: ((inputJson: string) => string | null) | null;
+  now: () => number;
   entries = new Map<string, TranscriptEntry>();
   generation = 0;
   running: Promise<void> | null = null;
   nextImmediate: NodeJS.Immediate | null = null;
+  #activeEntryKey: string | null = null;
   #lastContinuedKey: string | null = null;
   #drainWaiters = new Set<() => void>();
 
-  constructor({ root = transcriptBrainRoot(), maxEntries = 8, maxRows = 8192, bytesPerPass = 2 * 1024 * 1024, passMs = 100, nativeScan = null }: TranscriptReaderOptions = {}) {
+  constructor({ root = transcriptBrainRoot(), maxEntries = 8, maxRows = 8192, bytesPerPass = 2 * 1024 * 1024, passMs = 100, nativeScan = null, now = Date.now }: TranscriptReaderOptions = {}) {
     this.root = root;
     this.maxEntries = isNonNegInt(maxEntries) && maxEntries > 0 ? Math.min(8, maxEntries) : 8;
     this.maxRows = isNonNegInt(maxRows) && maxRows > 0 ? Math.min(8192, maxRows) : 8192;
     this.bytesPerPass = isNonNegInt(bytesPerPass) ? Math.max(65536, Math.min(2 * 1024 * 1024, bytesPerPass)) : 2 * 1024 * 1024;
     this.passMs = isNonNegInt(passMs) ? Math.max(1, Math.min(100, passMs)) : 100;
     this.nativeScan = typeof nativeScan === 'function' ? nativeScan : null;
+    this.now = typeof now === 'function' ? now : Date.now;
   }
 
   #notifyDrain(): void { for (const resolve of this.#drainWaiters) resolve(); this.#drainWaiters.clear(); }
@@ -163,6 +169,7 @@ export class TranscriptReader {
   reset(): void {
     this.generation++;
     this.entries.clear();
+    this.#activeEntryKey = null;
     this.#lastContinuedKey = null;
     if (this.nextImmediate) { clearImmediate(this.nextImmediate); this.nextImmediate = null; }
     this.#notifyDrain();
@@ -170,6 +177,32 @@ export class TranscriptReader {
 
   dispose(): void {
     this.reset();
+  }
+
+  trimIdle(maxAgeMs = 180_000, keepIds?: ReadonlySet<string>): number {
+    const now = this.now();
+    const isKept = (key: string, entry: TranscriptEntry): boolean =>
+      Boolean(
+        keepIds &&
+          (keepIds.has(key) || keepIds.has(entry.id) || keepIds.has(entry.id.toLowerCase())),
+      );
+    let evicted = 0;
+    for (const [key, entry] of [...this.entries]) {
+      if (
+        isKept(key, entry) ||
+        entry.requested ||
+        entry.continuing ||
+        key === this.#activeEntryKey
+      ) {
+        continue;
+      }
+      const accessedAt = (entry as TimestampedTranscriptEntry).lastAccessedAt ?? 0;
+      if (now - accessedAt >= maxAgeMs) {
+        this.entries.delete(key);
+        evicted++;
+      }
+    }
+    return evicted;
   }
 
   request(scope: string | undefined, id: string | undefined, raw: unknown): TranscriptStats {
@@ -180,6 +213,7 @@ export class TranscriptReader {
     let entry = this.entries.get(key);
     if (!entry) entry = { key, id: id!.toLowerCase(), state: null, error: null, requested: false, continuing: false };
     entry.boundary = b; entry.requested = true; entry.continuing = false;
+    (entry as TimestampedTranscriptEntry).lastAccessedAt = this.now();
     this.entries.delete(key); this.entries.set(key, entry);
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
@@ -203,11 +237,17 @@ export class TranscriptReader {
         entry.requested = false; entry.continuing = false;
         const generation = this.generation;
         const current = (): boolean => generation === this.generation && this.entries.get(entry.key) === entry;
+        this.#activeEntryKey = entry.key;
         try {
           await this.read(entry, current);
-          if (current() && !entry.error && entry.state && !entry.state.eof && !entry.state.limit && !entry.requested) entry.continuing = true;
+          if (current()) {
+            (entry as TimestampedTranscriptEntry).lastAccessedAt = this.now();
+            if (!entry.error && entry.state && !entry.state.eof && !entry.state.limit && !entry.requested) entry.continuing = true;
+          }
         } catch {
           if (current()) { entry.error = 'io-error'; entry.continuing = false; }
+        } finally {
+          if (this.#activeEntryKey === entry.key) this.#activeEntryKey = null;
         }
       }
     }).finally(() => {

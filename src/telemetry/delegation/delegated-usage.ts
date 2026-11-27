@@ -31,6 +31,8 @@ export type {
   DelegatedTaskState,
 } from './delegated-types.ts';
 
+type TimestampedDelegatedTaskState = DelegatedTaskState & { lastAccessedAt?: number };
+
 export class DelegatedUsage {
   client: DelegatedClientLike;
   onSource: NonNullable<DelegatedUsageOptions['onSource']>;
@@ -95,6 +97,7 @@ export class DelegatedUsage {
     if (!norm) return [];
     const task = this.tasks.get(norm);
     if (!task) return [];
+    (task as TimestampedDelegatedTaskState).lastAccessedAt = this.now();
     return buildTimelineChildren(task, this.client.reader?.summaries || {});
   }
 
@@ -108,6 +111,25 @@ export class DelegatedUsage {
   dispose(): void {
     this.disposed = true;
     this.reset();
+  }
+
+  trimIdle(maxAgeMs = 180_000, keepIds?: ReadonlySet<string>): number {
+    const now = this.now();
+    const isKept = (key: string): boolean =>
+      Boolean(keepIds && (keepIds.has(key) || keepIds.has(key.toLowerCase())));
+    let evicted = 0;
+    for (const [key, task] of [...this.tasks]) {
+      if (isKept(key) || task.collecting || task.requested) continue;
+      const accessedAt =
+        (task as TimestampedDelegatedTaskState).lastAccessedAt ??
+        (Number.isFinite(task.lastAt) ? task.lastAt : 0);
+      if (now - accessedAt >= maxAgeMs) {
+        this.bytes = Math.max(0, this.bytes - task.bytes);
+        this.tasks.delete(key);
+        evicted++;
+      }
+    }
+    return evicted;
   }
 
   links(id: unknown, raw: unknown): string[] {
@@ -149,6 +171,7 @@ export class DelegatedUsage {
     }
     this.tasks.delete(normId);
     this.tasks.set(normId, task);
+    (task as TimestampedDelegatedTaskState).lastAccessedAt = this.now();
     task.isCurrent = isCurrent;
     seedTaskHints(task.hints, task.id, saved);
     const oldSize = task.children.size;
@@ -271,6 +294,7 @@ export class DelegatedUsage {
             );
           } finally {
             task.collecting = false;
+            (task as TimestampedDelegatedTaskState).lastAccessedAt = this.now();
           }
         }
       })

@@ -4,7 +4,7 @@ import { setAttr, setHidden, setMarkup, setText } from '../../shared/dom.ts';
 import createDashboardI18n from '../i18n/index.ts';
 import { FONT_CONTROL_CSS } from '../shared/font-popover.ts';
 import createAgPulseTheme from '../theme/index.ts';
-import createUsageDashboard, { type UsageDashboardHandle } from '../usage-modal/index.ts';
+import type { UsageDashboardHandle, UsageDashboardOptions } from '../usage-modal/types.ts';
 import { createCardSwitcher, createDomLookup, setExpandedState, syncPinBottom } from './dom-motion.ts';
 import { bindModelMixEvents, renderModelMix } from './model-mix.ts';
 import { createPanelController } from './polling.ts';
@@ -101,6 +101,72 @@ function initPanel(): void {
   let controller!: ReturnType<typeof createPanelController>;
   let localUsage: UsageDashboardHandle | null = null;
   let usageThemeController: ReturnType<typeof theme.attach> | null = null;
+  type UsageDashboardFactory = (options: UsageDashboardOptions) => UsageDashboardHandle;
+  type PanelWindowWithUsage = PanelWindow & {
+    __agPulseUsageFactory?: UsageDashboardFactory;
+  };
+  let usageFactoryPromise: Promise<UsageDashboardFactory> | null = null;
+  let pageDisposed = false;
+
+  const resolveUsageUiUrl = (): string => {
+    const version = document.querySelector('meta[name="ag-pulse-panel-assets"]')?.getAttribute('content');
+    return version ? `/usage-ui.js?v=${encodeURIComponent(version)}` : '/usage-ui.js';
+  };
+
+  const loadUsageFactory = (): Promise<UsageDashboardFactory> => {
+    const winWithUsage = panelWin as PanelWindowWithUsage;
+    if (typeof winWithUsage.__agPulseUsageFactory === 'function') {
+      return Promise.resolve(winWithUsage.__agPulseUsageFactory);
+    }
+    if (usageFactoryPromise) return usageFactoryPromise;
+
+    usageFactoryPromise = new Promise<UsageDashboardFactory>((resolve, reject) => {
+      const existing = document.querySelector<HTMLScriptElement>('script[data-ag-pulse-usage-ui="1"]');
+      const attachTarget = document.head || document.documentElement || document.body;
+      if (!attachTarget) {
+        reject(new Error('Document unavailable for usage dashboard script'));
+        return;
+      }
+      const script = existing || document.createElement('script');
+      let settled = false;
+      const cleanup = (): void => {
+        script.removeEventListener('load', onLoad);
+        script.removeEventListener('error', onError);
+      };
+      const onLoad = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const factory = winWithUsage.__agPulseUsageFactory;
+        if (typeof factory === 'function') {
+          resolve(factory);
+        } else {
+          script.remove();
+          reject(new Error('Usage dashboard factory did not initialize'));
+        }
+      };
+      const onError = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        script.remove();
+        reject(new Error('Failed to load /usage-ui.js'));
+      };
+      script.addEventListener('load', onLoad);
+      script.addEventListener('error', onError);
+      if (!existing) {
+        script.dataset.agPulseUsageUi = '1';
+        script.async = true;
+        script.src = resolveUsageUiUrl();
+        attachTarget.append(script);
+      }
+    }).catch((err) => {
+      usageFactoryPromise = null;
+      throw err;
+    });
+
+    return usageFactoryPromise;
+  };
 
   const render = (): void => {
     const snapshot = state.snapshot;
@@ -509,7 +575,7 @@ function initPanel(): void {
     });
   }
 
-  const ensureLocalUsage = (): UsageDashboardHandle => {
+  const ensureLocalUsage = (createUsageDashboard: UsageDashboardFactory): UsageDashboardHandle => {
     if (localUsage) return localUsage;
     const usageHost = ctx.$('panel-usage-host') || document.body;
     const shadow = usageHost.shadowRoot || usageHost.attachShadow({ mode: 'open' });
@@ -594,12 +660,19 @@ function initPanel(): void {
         } catch {
           // Fall back to embedded local usage modal when host CDP modal is unavailable.
         }
-        if (!state.snapshot?.usage) {
-          await controller.refresh(true, { includeUsage: true });
-        }
-        if (!state.snapshot?.usage) return;
-        const dashboard = ensureLocalUsage();
+        const [usageFactory] = await Promise.all([
+          loadUsageFactory(),
+          state.snapshot?.usage ? Promise.resolve() : controller.refresh(true, { includeUsage: true }),
+        ]);
+        if (pageDisposed || !state.snapshot?.usage) return;
+        const dashboard = ensureLocalUsage(usageFactory);
         dashboard.open(state.snapshot.usage, openUsageBtn);
+      } catch (err) {
+        const note = ctx.$('health-note');
+        if (note) {
+          setText(note, err instanceof Error ? err.message : t('panelUnavailable'));
+          note.classList.add('warning');
+        }
       } finally {
         openUsageBtn.disabled = false;
       }
@@ -615,6 +688,7 @@ function initPanel(): void {
     }
   });
   window.addEventListener('pagehide', () => {
+    pageDisposed = true;
     closeQuotaPopoverNow();
     stopCountdownTimer();
     controller.stopTimers();
@@ -631,6 +705,7 @@ function initPanel(): void {
   });
   window.addEventListener('pageshow', (event) => {
     if (!event.persisted) return;
+    pageDisposed = false;
     ctx.setThemeController(theme.attach(document.documentElement));
     ctx.setPreferences(controller.connectPreferences());
     document.addEventListener('pointerdown', onDocQuotaPointerDown, true);

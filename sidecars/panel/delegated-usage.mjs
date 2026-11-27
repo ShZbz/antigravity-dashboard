@@ -697,6 +697,7 @@ var DelegatedUsage = class {
     if (!norm) return [];
     const task = this.tasks.get(norm);
     if (!task) return [];
+    task.lastAccessedAt = this.now();
     return buildTimelineChildren(task, this.client.reader?.summaries || {});
   }
   reset() {
@@ -708,6 +709,21 @@ var DelegatedUsage = class {
   dispose() {
     this.disposed = true;
     this.reset();
+  }
+  trimIdle(maxAgeMs = 18e4, keepIds) {
+    const now = this.now();
+    const isKept = (key) => Boolean(keepIds && (keepIds.has(key) || keepIds.has(key.toLowerCase())));
+    let evicted = 0;
+    for (const [key, task] of [...this.tasks]) {
+      if (isKept(key) || task.collecting || task.requested) continue;
+      const accessedAt = task.lastAccessedAt ?? (Number.isFinite(task.lastAt) ? task.lastAt : 0);
+      if (now - accessedAt >= maxAgeMs) {
+        this.bytes = Math.max(0, this.bytes - task.bytes);
+        this.tasks.delete(key);
+        evicted++;
+      }
+    }
+    return evicted;
   }
   links(id, raw) {
     return delegatedIds2(id, raw, this.client.reader?.summaries || {});
@@ -741,6 +757,7 @@ var DelegatedUsage = class {
     }
     this.tasks.delete(normId);
     this.tasks.set(normId, task);
+    task.lastAccessedAt = this.now();
     task.isCurrent = isCurrent;
     seedTaskHints(task.hints, task.id, saved);
     const oldSize = task.children.size;
@@ -845,6 +862,7 @@ var DelegatedUsage = class {
           );
         } finally {
           task.collecting = false;
+          task.lastAccessedAt = this.now();
         }
       }
     }).finally(() => {

@@ -2,7 +2,7 @@
   "name": "antigravity-pulse",
   "displayName": "Antigrative Dashboard",
   "description": "Token throughput, cache hit, context window, quotas, and full-page Token Usage dashboard on Windows, Linux and macOS. English / Chinese switching.",
-  "version": "0.12.7",
+  "version": "0.12.8",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Open the Token Usage dashboard",

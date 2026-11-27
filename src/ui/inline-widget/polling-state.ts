@@ -21,6 +21,7 @@ export interface PollingCallbacks {
   getRoot: () => ShadowRoot | null;
   getNode: () => HTMLElement | null;
   getLanguage: () => WidgetLanguage;
+  isUsageOpen?: () => boolean;
   onConversationReset: () => void;
   onRender: () => void;
   onHide: () => void;
@@ -36,6 +37,7 @@ export class WidgetPollingState {
   private refreshRequest: Promise<void> | null = null;
   private queuedForceRequest: Promise<void> | null = null;
   private manualRequest: ManualRefreshState | null = null;
+  private usageFetchRequest: Promise<WidgetMetricsSnapshot['usage'] | null> | null = null;
   private requestEpoch = 0;
   private refreshSeq = 0;
   private lastFetch = 0;
@@ -81,6 +83,7 @@ export class WidgetPollingState {
     this.refreshRequest = null;
     this.queuedForceRequest = null;
     this.manualRequest = null;
+    this.usageFetchRequest = null;
     this.lastFetch = 0;
   }
 
@@ -114,6 +117,7 @@ export class WidgetPollingState {
     this.lastFetch = 0;
     this.callbacks.onConversationReset();
     this.manualRequest = null;
+    this.usageFetchRequest = null;
     this.setRefreshBusy(false);
     this.data = { connection: 'offline', error: null, serverTime: '', groups: [], speed: null };
     this.callbacks.onHide();
@@ -159,11 +163,13 @@ export class WidgetPollingState {
     this.pending = true;
     this.pendingForce = force;
     this.lastFetch = Date.now();
+    const includeUsage = Boolean(this.callbacks.isUsageOpen?.());
     const reqPromise = (async () => {
       try {
         const result = (await this.host.getMetrics({
           conversationId: conversation,
           force,
+          includeUsage,
         })) as WidgetMetricsSnapshot;
         if (!current()) return;
         const activeNode = this.callbacks.getNode();
@@ -176,6 +182,9 @@ export class WidgetPollingState {
         }
         if (!conversation || (result.speed && result.speed.conversationId !== conversation)) {
           result.speed = null;
+        }
+        if (result.usage === undefined && this.callbacks.isUsageOpen?.() && this.data?.usage !== undefined) {
+          result.usage = this.data.usage;
         }
         this.data = result;
         if (result.preferences) {
@@ -201,6 +210,54 @@ export class WidgetPollingState {
     })();
     this.refreshRequest = reqPromise;
     return reqPromise;
+  }
+
+  fetchUsage(): Promise<WidgetMetricsSnapshot['usage'] | null> {
+    if (this.disposed) return Promise.resolve(null);
+    if (this.data?.usage) return Promise.resolve(this.data.usage);
+    const node = this.callbacks.getNode();
+    if (!node?.isConnected) return Promise.resolve(null);
+    if (this.usageFetchRequest) return this.usageFetchRequest;
+
+    const conversation = this.callbacks.getConversationId();
+    const epoch = this.requestEpoch;
+    let req: Promise<WidgetMetricsSnapshot['usage'] | null> | null = null;
+    req = (async () => {
+      try {
+        const result = (await this.host.getMetrics({
+          conversationId: conversation,
+          force: false,
+          includeUsage: true,
+        })) as WidgetMetricsSnapshot;
+        if (
+          this.disposed ||
+          epoch !== this.requestEpoch ||
+          conversation !== this.callbacks.getConversationId() ||
+          !this.callbacks.getNode()?.isConnected
+        ) {
+          return null;
+        }
+        if (this.data) {
+          if (result.usage !== undefined) {
+            this.data.usage = result.usage;
+          }
+        } else {
+          if (!conversation || (result.speed && result.speed.conversationId !== conversation)) {
+            result.speed = null;
+          }
+          this.data = result;
+        }
+        return result.usage ?? null;
+      } catch {
+        return null;
+      } finally {
+        if (this.usageFetchRequest === req) {
+          this.usageFetchRequest = null;
+        }
+      }
+    })();
+    this.usageFetchRequest = req;
+    return req;
   }
 
   refreshManually(onBeforeRefresh: () => void): Promise<void> {

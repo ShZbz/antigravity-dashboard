@@ -2,11 +2,11 @@
 
 // src/telemetry/main.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync4, readFileSync as readFileSync5 } from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
+import { createRequire as createRequire2 } from "node:module";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname4, join as join6 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname as dirname5, join as join7 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { readHostTheme } from "../../compat/host-theme.mjs";
 import {
   RuntimeUi,
@@ -914,13 +914,13 @@ function fetchDevToolsTargets(port, options = {}) {
   const responseError = options.responseErrorMessage ?? "Invalid renderer discovery response";
   const timeoutError = options.timeoutErrorMessage ?? "Renderer discovery timeout";
   const tooLargeError = options.tooLargeErrorMessage ?? "Discovery response too large";
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve4, reject) => {
     let settled = false;
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
       if (error) reject(error);
-      else resolve3(value ?? []);
+      else resolve4(value ?? []);
     };
     const abort = (error) => {
       finish(error);
@@ -963,14 +963,126 @@ async function discoverDevToolsTargets(profile, options = {}) {
   };
 }
 
+// src/platform/native-bridge.ts
+import { existsSync as existsSync3 } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname as dirname4, join as join4, resolve as resolve3 } from "node:path";
+import { fileURLToPath } from "node:url";
+var cachedAddon = null;
+var cachedPath = null;
+var cachedEnvPath = null;
+var failedPaths = /* @__PURE__ */ new Set();
+function isDisabled() {
+  return process.env.PULSE_DISABLE_NATIVE_ACCEL === "1";
+}
+function resolveImportMetaUrl() {
+  try {
+    const metaUrl = typeof import.meta === "object" ? import.meta.url : void 0;
+    return typeof metaUrl === "string" && metaUrl.length > 0 ? metaUrl : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function getAddonRequire() {
+  const metaUrl = resolveImportMetaUrl();
+  if (metaUrl) {
+    try {
+      return createRequire(metaUrl);
+    } catch {
+    }
+  }
+  try {
+    return createRequire(join4(process.cwd(), "package.json"));
+  } catch {
+    return null;
+  }
+}
+function platformAddonFilename(platform = process.platform, arch = process.arch) {
+  return `pulse-accel.${platform}-${arch}.node`;
+}
+function addonSearchBases(dir) {
+  return [join4(dir, platformAddonFilename()), join4(dir, "pulse-accel.node")];
+}
+function candidateAddonPaths() {
+  const envPath = process.env.PULSE_ACCEL_PATH?.trim();
+  if (envPath) {
+    return [resolve3(envPath)];
+  }
+  const candidates = [];
+  const metaUrl = resolveImportMetaUrl();
+  if (metaUrl) {
+    try {
+      const here = dirname4(fileURLToPath(metaUrl));
+      candidates.push(
+        ...addonSearchBases(here),
+        ...addonSearchBases(join4(here, "..", "sidecars", "panel")),
+        ...addonSearchBases(join4(here, "..", "..", "sidecars", "panel"))
+      );
+    } catch {
+    }
+  }
+  try {
+    candidates.push(...addonSearchBases(join4(process.cwd(), "sidecars", "panel")));
+  } catch {
+  }
+  return [...new Set(candidates)];
+}
+function getAddon() {
+  if (isDisabled()) return null;
+  const rawEnvPath = process.env.PULSE_ACCEL_PATH?.trim();
+  const envPath = rawEnvPath ? resolve3(rawEnvPath) : null;
+  if (cachedAddon && cachedEnvPath === envPath) {
+    return cachedAddon;
+  }
+  const req = getAddonRequire();
+  if (!req) return null;
+  for (const candidate of candidateAddonPaths()) {
+    if (failedPaths.has(candidate)) continue;
+    if (!existsSync3(candidate)) continue;
+    try {
+      const loaded = req(candidate);
+      if (loaded && typeof loaded.extractSqliteUsageRecordsJson === "function" && typeof loaded.readSqliteTrajectoryJson === "function" && typeof loaded.readSqliteConversationMetaJson === "function") {
+        cachedAddon = loaded;
+        cachedPath = candidate;
+        cachedEnvPath = envPath;
+        return cachedAddon;
+      }
+      failedPaths.add(candidate);
+    } catch {
+      failedPaths.add(candidate);
+    }
+  }
+  cachedAddon = null;
+  cachedPath = null;
+  cachedEnvPath = null;
+  return null;
+}
+function releaseNativeCaches(mode) {
+  if (mode !== "soft" && mode !== "full") return null;
+  const addon = getAddon();
+  const fn = addon?.releaseNativeCachesJson;
+  if (typeof fn !== "function") return null;
+  try {
+    const json = fn(mode);
+    if (typeof json !== "string" || !json) return null;
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object" || typeof parsed.released !== "boolean" || parsed.mode !== "soft" && parsed.mode !== "full" || typeof parsed.ledgerCleared !== "boolean" || typeof parsed.projectCleared !== "boolean") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // src/telemetry/main.ts
 import { PreferencesStore } from "../../compat/preferences.mjs";
 import { SidecarOwner } from "../../compat/sidecar-owner.mjs";
 import { AntigravityClient } from "./client.mjs";
 
 // src/telemetry/host-watchdog.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
+import { join as join5 } from "node:path";
 import { platformPaths as platformPaths2 } from "../../compat/platform.mjs";
 import { discoverProcesses } from "./discovery.mjs";
 var DEFAULT_WATCHDOG_POLL_INTERVAL_MS = 5 * 1e3;
@@ -984,7 +1096,7 @@ function defaultHostPredicate(proc) {
 async function defaultProbeRenderers(profiles) {
   let total = 0;
   for (const profile of profiles) {
-    if (!profile || !existsSync3(join4(profile, "DevToolsActivePort"))) continue;
+    if (!profile || !existsSync4(join5(profile, "DevToolsActivePort"))) continue;
     try {
       const { targets } = await discoverDevToolsTargets(profile, { mode: "desktop", timeoutMs: 1e3 });
       total += targets.length;
@@ -1426,7 +1538,7 @@ import { panelAppSource as panelAppSource2, panelPageSource as panelPageSource2 
 // src/telemetry/preview-server.ts
 import { readFileSync as readFileSync4 } from "node:fs";
 import { createServer } from "node:http";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 import { panelAppSource, panelPageSource } from "./panel-source.mjs";
 var IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 var assetCacheControl = (pathname, url) => {
@@ -1466,6 +1578,7 @@ function startPreviewServer(options) {
     usageBridge,
     i18nModule: i18nModule2,
     themeModule: themeModule2,
+    usageUiModule: usageUiModule2,
     themeCss: themeCss2,
     inlineSource: inlineSource2
   } = options;
@@ -1575,7 +1688,7 @@ function startPreviewServer(options) {
             await metrics2({
               conversationId: url.searchParams.get("conversationId"),
               force: url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true",
-              includeUsage: url.searchParams.get("includeUsage") !== "0"
+              includeUsage: url.searchParams.get("includeUsage") !== "0" && url.searchParams.get("includeUsage") !== "false"
             })
           )
         );
@@ -1607,6 +1720,16 @@ function startPreviewServer(options) {
       res.end(themeModule2());
       return;
     }
+    if (url.pathname === "/usage-ui.js") {
+      if (!usageUiModule2) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+      res.end(usageUiModule2());
+      return;
+    }
     if (url.pathname === "/theme.css") {
       res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" });
       res.end(themeCss2());
@@ -1624,7 +1747,7 @@ function startPreviewServer(options) {
     }
     if (url.pathname.startsWith("/toolbar-preview")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(readFileSync4(join5(here, "toolbar-preview.html"), "utf8"));
+      res.end(readFileSync4(join6(here, "toolbar-preview.html"), "utf8"));
       return;
     }
     const file = staticFiles2[url.pathname];
@@ -1634,9 +1757,10 @@ function startPreviewServer(options) {
       return;
     }
     res.writeHead(200, { "Content-Type": `${file[1]}; charset=utf-8` });
-    res.end(url.pathname === "/" ? panelPageSource() : readFileSync4(join5(here, file[0]), "utf8"));
+    res.end(url.pathname === "/" ? panelPageSource() : readFileSync4(join6(here, file[0]), "utf8"));
   });
   server.listen(port, "127.0.0.1", () => console.log(`Antigrative Dashboard: http://127.0.0.1:${port}`));
+  return server;
 }
 
 // src/telemetry/main.ts
@@ -1646,23 +1770,32 @@ import { loadSidecarSdk } from "./sdk.mjs";
 import { SessionHistory } from "./history.mjs";
 import { MetricsStore } from "./store.mjs";
 import { AppUpdater } from "./updater.mjs";
-var HERE = dirname4(fileURLToPath(import.meta.url));
+var HERE = dirname5(fileURLToPath2(import.meta.url));
 var paths = platformPaths3();
 var isSidecar = Boolean(process.env.ANTIGRAVITY_SIDECAR_WEB_PORT);
 var ownership = isSidecar ? new SidecarOwner(paths.data) : null;
 if (ownership && !await ownership.claim()) process.exit(0);
-var COMPAT_DIR = join6(HERE, "..", "..", "compat");
-var CONFIG_FILE = join6(homedir2(), ".gemini", "config", "config.json");
+var COMPAT_DIR = join7(HERE, "..", "..", "compat");
+var CONFIG_FILE = join7(homedir2(), ".gemini", "config", "config.json");
 var readCompat = (name, cache) => {
   if (cache?.has(name)) return cache.get(name);
-  const text = readFileSync5(join6(COMPAT_DIR, name), "utf8");
+  const text = readFileSync5(join7(COMPAT_DIR, name), "utf8");
   cache?.set(name, text);
   return text;
 };
 var buildExtras = (cache) => bindWindowFactory("__agPulseUpdateFactory", readCompat("update-ui.cjs", cache), "update-ui") + bindWindowFactory("__agPulseUsageFactory", readCompat("usage-ui.cjs", cache), "usage-ui");
+var buildRendererSource = (token, startedAt, cache = null) => makeRendererSource(
+  readCompat("i18n.cjs", cache),
+  readCompat("inline-widget.cjs", cache),
+  readCompat("theme.cjs", cache),
+  token ?? null,
+  startedAt ?? 0,
+  buildExtras(cache)
+);
+var usageUiModule = () => bindWindowFactory("__agPulseUsageFactory", readCompat("usage-ui.cjs", null), "usage-ui");
 var GUID = /^(?:[a-zA-Z0-9_.-]+\/)*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var compatCache = /* @__PURE__ */ new Map();
-var createTheme = createRequire(import.meta.url)("../../compat/theme.cjs");
+var createTheme = createRequire2(import.meta.url)("../../compat/theme.cjs");
 var themeCss = () => createTheme().css(":root");
 var preferences = new PreferencesStore();
 var initialPrefs = await preferences.snapshot().catch(() => null);
@@ -1702,7 +1835,7 @@ var createLocalIdentityResolver = (ledger, profileKey, isVertex = false) => asyn
   const prefix = isVertex ? "vertex:" : "local:";
   return createHash("sha256").update(`${prefix}${profileKey}`).digest("hex");
 };
-var proLedger = new UsageLedger(join6(paths.data, "usage-v1"));
+var proLedger = new UsageLedger(join7(paths.data, "usage-v1"));
 var proConversationsDir = defaultConversationsDir("app", paths.home);
 var store = new MetricsStore(void 0, {
   dataDir: paths.data,
@@ -1755,9 +1888,9 @@ var usage = new DesktopUsage(store, proLedger, {
 });
 store.onTrajectory = (scope, id, raw) => usage.ingest(scope, id, raw);
 store.onAccount = (scope, meta) => usage.ledger.registerAccount(scope, meta);
-var updater = new AppUpdater({ pluginDir: join6(HERE, "..", ".."), dataDir: paths.data });
+var updater = new AppUpdater({ pluginDir: join7(HERE, "..", ".."), dataDir: paths.data });
 var IMMUTABLE_CACHE_CONTROL2 = "public, max-age=31536000, immutable";
-var parseIncludeUsage = (value) => value !== "0" && value !== 0 && value !== false;
+var parseIncludeUsage = (value) => value !== "0" && value !== 0 && value !== false && value !== "false";
 var staticCacheControl = (path, data) => {
   if (path === "/") return "no-cache";
   const version = data && typeof data === "object" && "v" in data ? data.v : void 0;
@@ -1773,13 +1906,14 @@ var createMetrics = (targetStore, targetUsage, getHealth, targetProfile) => asyn
   const integration2 = {
     ...getHealth(),
     hostVersion,
-    activePortPresent: existsSync4(join6(targetProfile, "DevToolsActivePort")),
+    activePortPresent: existsSync5(join7(targetProfile, "DevToolsActivePort")),
     debugLaunchEnabled: prefs && !("error" in prefs) ? prefs.debugLaunchEnabled === true : debugStatus.enabled,
     debugLaunchConfigured: debugStatus.configured
   };
   if (input?.includeUsage === false) {
     const { conversations: _omitted, ...compactBase } = base;
-    return { ...compactBase, preferences: prefs, theme, integration: integration2 };
+    const usageTotals = await targetUsage.totalsSnapshot();
+    return { ...compactBase, usageTotals, preferences: prefs, theme, integration: integration2 };
   }
   return { ...base, usage: await targetUsage.snapshot(), preferences: prefs, theme, integration: integration2 };
 };
@@ -1789,18 +1923,14 @@ var staticFiles = {
   "/format.mjs": ["format.mjs", "text/javascript"],
   "/logo.svg": ["../../assets/logo.svg", "image/svg+xml"]
 };
-var inlineSource = (cache = isSidecar ? compatCache : null) => {
+var inlineSource = (cache = null) => {
   const file = readCompat("inline-widget.cjs", cache);
   const i18n = readCompat("i18n.cjs", cache);
   const theme = readCompat("theme.cjs", cache);
   return buildExtras(cache) + bindWindowFactory("__agPulseI18nFactory", i18n, "i18n") + bindWindowFactory("__agPulseThemeFactory", theme, "theme") + invokeCjsFactory(file, "inline-widget");
 };
-var i18nModule = (cache = isSidecar ? compatCache : null) => makeEsmExportFromCjs("createI18n", readCompat("i18n.cjs", cache), "i18n");
-var themeModule = (cache = isSidecar ? compatCache : null) => makeEsmExportFromCjs("createTheme", readCompat("theme.cjs", cache), "theme");
-var sharedI18n = readCompat("i18n.cjs", compatCache);
-var sharedInline = readCompat("inline-widget.cjs", compatCache);
-var sharedTheme = readCompat("theme.cjs", compatCache);
-var sharedExtras = buildExtras(compatCache);
+var i18nModule = (cache = null) => makeEsmExportFromCjs("createI18n", readCompat("i18n.cjs", cache), "i18n");
+var themeModule = (cache = null) => makeEsmExportFromCjs("createTheme", readCompat("theme.cjs", cache), "theme");
 var metrics = createMetrics(store, usage, () => integration.health, paths.profile);
 var proUsageBridge = {
   addManualUsage: (input) => usage.addManualUsage(input?.scope || "", input?.data || input || {}),
@@ -1814,23 +1944,29 @@ var proUsageBridge = {
   setRecordingAccount: (input) => usage.setRecordingAccount(input),
   addAccount: (input) => usage.addLocalAccount(input || {}),
   reassignConversation: (input) => usage.reassignConversation(input),
-  getProjectUsage: (input) => queryProjectUsageOverview({
-    ledger: usage.ledger,
-    store,
-    profileDir: dirname4(defaultConversationsDir("app", homedir2())),
-    scope: input?.scope ?? null,
-    from: input?.from,
-    to: input?.to
-  }),
-  getProjectDetail: (input) => queryProjectConversationDetail({
-    ledger: usage.ledger,
-    store,
-    profileDir: dirname4(defaultConversationsDir("app", homedir2())),
-    projectKey: input.projectKey,
-    scope: input?.scope ?? null,
-    from: input?.from,
-    to: input?.to
-  })
+  getProjectUsage: (input) => {
+    usage.ledger.touchUsageActivity();
+    return queryProjectUsageOverview({
+      ledger: usage.ledger,
+      store,
+      profileDir: dirname5(defaultConversationsDir("app", homedir2())),
+      scope: input?.scope ?? null,
+      from: input?.from,
+      to: input?.to
+    });
+  },
+  getProjectDetail: (input) => {
+    usage.ledger.touchUsageActivity();
+    return queryProjectConversationDetail({
+      ledger: usage.ledger,
+      store,
+      profileDir: dirname5(defaultConversationsDir("app", homedir2())),
+      projectKey: input.projectKey,
+      scope: input?.scope ?? null,
+      from: input?.from,
+      to: input?.to
+    });
+  }
 };
 var integration = new RuntimeUi({
   snapshot: (input) => metrics(input),
@@ -1838,7 +1974,7 @@ var integration = new RuntimeUi({
   updater,
   owner: ownership?.token,
   owns: () => ownership ? ownership.running && ownership.isOwner() : true,
-  source: makeRendererSource(sharedI18n, sharedInline, sharedTheme, ownership?.token, ownership?.startedAt, sharedExtras),
+  source: buildRendererSource(ownership?.token, ownership?.startedAt, compatCache),
   dataDir: paths.data,
   enabled: isEnabled,
   addManualUsage: proUsageBridge.addManualUsage,
@@ -1853,25 +1989,25 @@ var integration = new RuntimeUi({
   getProjectDetail: proUsageBridge.getProjectDetail,
   clearTimeline: (input) => store.clearTimeline(input?.conversationId || null)
 });
-var vertexRoot = join6(homedir2(), ".antigravity-vertex");
-var vertexHome = join6(vertexRoot, "home");
-var vertexProfile = join6(vertexRoot, "user-data");
-var canActivateVertex = () => existsSync4(vertexProfile) && homedir2().toLowerCase() !== vertexHome.toLowerCase();
+var vertexRoot = join7(homedir2(), ".antigravity-vertex");
+var vertexHome = join7(vertexRoot, "home");
+var vertexProfile = join7(vertexRoot, "user-data");
+var canActivateVertex = () => existsSync5(vertexProfile) && homedir2().toLowerCase() !== vertexHome.toLowerCase();
 var createVertexInstance = () => {
-  const vDataDir = join6(vertexHome, ".gemini", "antigravity", "sidecar_data", "antigravity-pulse", "panel", "data");
+  const vDataDir = join7(vertexHome, ".gemini", "antigravity", "sidecar_data", "antigravity-pulse", "panel", "data");
   const vPathsValue = platformPaths3({
     home: vertexHome,
     env: { ...process.env, USERPROFILE: vertexHome, HOME: vertexHome, AG_PULSE_PROFILE: vertexProfile, ANTIGRAVITY_EXECUTABLE_DATA_DIR: vDataDir }
   });
   const vClient = new AntigravityClient({ paths: () => vPathsValue, env: {} });
-  const vLedger = new UsageLedger(join6(vDataDir, "usage-v1"));
+  const vLedger = new UsageLedger(join7(vDataDir, "usage-v1"));
   const vConversationsDir = defaultConversationsDir("app", vertexHome);
   const vStore = new MetricsStore(vClient, {
     dataDir: vDataDir,
     modelTimelineEnabled: timelineEnabled,
     owns: () => !ownership || ownership.running,
-    history: new SessionHistory(join6(vDataDir, "history-v1")),
-    transcripts: new TranscriptReader({ root: join6(vertexHome, ".gemini", "antigravity", "brain") }),
+    history: new SessionHistory(join7(vDataDir, "history-v1")),
+    transcripts: new TranscriptReader({ root: join7(vertexHome, ".gemini", "antigravity", "brain") }),
     resolveLocalIdentity: createLocalIdentityResolver(vLedger, vertexProfile, true)
   });
   const vertexUsage = new DesktopUsage(vStore, vLedger, {
@@ -1895,7 +2031,7 @@ var createVertexInstance = () => {
     updater,
     owner: vToken,
     owns: () => ownership ? ownership.running && ownership.isOwner() : true,
-    source: makeRendererSource(sharedI18n, sharedInline, sharedTheme, vToken, ownership?.startedAt, sharedExtras),
+    source: buildRendererSource(vToken, ownership?.startedAt),
     dataDir: vDataDir,
     enabled: isEnabled,
     addManualUsage: (input) => {
@@ -1935,10 +2071,11 @@ var createVertexInstance = () => {
     },
     getProjectUsage: (input) => {
       vertexController?.recordActivity("runtime-ui-usage");
+      vertexUsage.ledger.touchUsageActivity();
       return queryProjectUsageOverview({
         ledger: vertexUsage.ledger,
         store: vStore,
-        profileDir: dirname4(defaultConversationsDir("app", vertexHome)),
+        profileDir: dirname5(defaultConversationsDir("app", vertexHome)),
         scope: input?.scope ?? null,
         from: input?.from,
         to: input?.to
@@ -1946,10 +2083,11 @@ var createVertexInstance = () => {
     },
     getProjectDetail: (input) => {
       vertexController?.recordActivity("runtime-ui-usage");
+      vertexUsage.ledger.touchUsageActivity();
       return queryProjectConversationDetail({
         ledger: vertexUsage.ledger,
         store: vStore,
-        profileDir: dirname4(defaultConversationsDir("app", vertexHome)),
+        profileDir: dirname5(defaultConversationsDir("app", vertexHome)),
         projectKey: input.projectKey,
         scope: input?.scope ?? null,
         from: input?.from,
@@ -1964,7 +2102,7 @@ var createVertexInstance = () => {
   return { store: vStore, usage: vertexUsage, integration: vertexIntegration };
 };
 var probeVertexActive = async () => {
-  if (!existsSync4(join6(vertexProfile, "DevToolsActivePort"))) return false;
+  if (!existsSync5(join7(vertexProfile, "DevToolsActivePort"))) return false;
   try {
     const { targets } = await discoverDevToolsTargets(vertexProfile, { mode: "desktop", timeoutMs: 800 });
     return targets.length > 0;
@@ -1995,8 +2133,9 @@ if (isSidecar) {
   const cachedI18n = i18nModule(compatCache);
   const cachedTheme = themeModule(compatCache);
   const cachedCss = themeCss();
+  compatCache.clear();
   for (const [path, [file, type]] of Object.entries(staticFiles)) {
-    const content = path === "/" ? cachedPage : readFileSync5(join6(HERE, file), "utf8");
+    const content = path === "/" ? cachedPage : readFileSync5(join7(HERE, file), "utf8");
     app.api(
       path,
       (data) => new Response(content, { contentType: type, headers: { "Cache-Control": staticCacheControl(path, data) } }),
@@ -2008,6 +2147,14 @@ if (isSidecar) {
     (data) => new Response(cachedApp, {
       contentType: "application/javascript",
       headers: { "Cache-Control": staticCacheControl("/app.js", data) }
+    }),
+    "GET"
+  );
+  app.api(
+    "/usage-ui.js",
+    (data) => new Response(usageUiModule(), {
+      contentType: "application/javascript; charset=utf-8",
+      headers: { "Cache-Control": staticCacheControl("/usage-ui.js", data) }
     }),
     "GET"
   );
@@ -2048,13 +2195,13 @@ if (isSidecar) {
   app.api("/api/integration", () => ({
     ...integration.health,
     hostVersion,
-    activePortPresent: existsSync4(join6(paths.profile, "DevToolsActivePort")),
+    activePortPresent: existsSync5(join7(paths.profile, "DevToolsActivePort")),
     debugLaunchConfigured: getDebugLaunchStatus().configured
   }), "GET");
   app.api("/api/debug-launch", () => ({
     ...getDebugLaunchStatus(),
     hostVersion,
-    activePortPresent: existsSync4(join6(paths.profile, "DevToolsActivePort"))
+    activePortPresent: existsSync5(join7(paths.profile, "DevToolsActivePort"))
   }), "GET");
   app.api("/api/debug-launch", async (data) => {
     try {
@@ -2065,7 +2212,7 @@ if (isSidecar) {
       return {
         ...outcome,
         hostVersion,
-        activePortPresent: existsSync4(join6(paths.profile, "DevToolsActivePort")),
+        activePortPresent: existsSync5(join7(paths.profile, "DevToolsActivePort")),
         preferences: saved
       };
     } catch (error) {
@@ -2134,6 +2281,78 @@ if (isSidecar) {
       return new Response(JSON.stringify({ error: errorMessage2(error) || "Timeline cache could not be cleared" }), { status: 400, contentType: "application/json" });
     }
   }, "POST");
+  const collectKeepIds = (targetStore) => {
+    const keep = /* @__PURE__ */ new Set();
+    const addId = (id) => {
+      if (typeof id === "string" && id) {
+        keep.add(id);
+        keep.add(id.toLowerCase());
+      }
+    };
+    addId(targetStore.lastActiveConversationId);
+    for (const id of targetStore.runningSessionIds) addId(id);
+    for (const [id, entry] of targetStore.sessions) {
+      if (entry.pending) addId(id);
+    }
+    const tasks = targetStore.delegated?.tasks;
+    if (tasks) {
+      for (const [parentId, task] of tasks) {
+        if ((keep.has(parentId) || keep.has(parentId.toLowerCase())) && task.children) {
+          for (const childId of task.children) addId(childId);
+        }
+      }
+    }
+    return keep;
+  };
+  const trimStoreIdleCaches = (targetStore, maxAgeMs = 18e4) => {
+    if (!targetStore) return;
+    const keepIds = collectKeepIds(targetStore);
+    targetStore.client?.reader?.trimIdle?.(maxAgeMs, keepIds);
+    targetStore.delegated?.trimIdle?.(maxAgeMs, keepIds);
+    targetStore.transcripts?.trimIdle?.(maxAgeMs, keepIds);
+  };
+  const countOpenSessions = (ui) => {
+    if (!ui) return 0;
+    let open2 = 0;
+    for (const conn of ui.sessions.values()) {
+      if (conn.closed !== true) open2++;
+    }
+    return open2;
+  };
+  const probeRendererCount = async () => {
+    const attached = countOpenSessions(integration) + countOpenSessions(vertexController?.getIntegration());
+    if (attached > 0) return attached;
+    let total = 0;
+    for (const profile of [paths.profile, vertexProfile]) {
+      if (!profile || !existsSync5(join7(profile, "DevToolsActivePort"))) continue;
+      try {
+        const { targets } = await discoverDevToolsTargets(profile, { mode: "desktop", timeoutMs: 1e3 });
+        total += targets.length;
+      } catch {
+      }
+    }
+    return total;
+  };
+  let lastNativeSoftReleaseAt = 0;
+  const runHousekeeping = () => {
+    trimStoreIdleCaches(store, 18e4);
+    trimStoreIdleCaches(vertexController?.getStore(), 18e4);
+    const now = Date.now();
+    const vUsage = vertexController?.getUsage() ?? null;
+    const lastUsageActivity = Math.max(
+      proLedger.lastUsageActivityAt || 0,
+      vUsage?.ledger?.lastUsageActivityAt || 0
+    );
+    if (lastUsageActivity > 0 && lastUsageActivity > lastNativeSoftReleaseAt && now - lastUsageActivity >= 12e4) {
+      lastNativeSoftReleaseAt = now;
+      try {
+        releaseNativeCaches("soft");
+      } catch {
+      }
+    }
+  };
+  const housekeepingTimer = setInterval(runHousekeeping, 6e4);
+  housekeepingTimer.unref?.();
   app.run();
   integration.start();
   vertexController.start();
@@ -2142,6 +2361,7 @@ if (isSidecar) {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(housekeepingTimer);
     hostWatchdog?.stop();
     usage.dispose();
     const exitTimer = setTimeout(() => process.exit(0), 2e3);
@@ -2153,6 +2373,7 @@ if (isSidecar) {
   };
   hostWatchdog = new HostLivenessWatchdog({
     profiles: [paths.profile, vertexProfile],
+    probeRendererCount,
     onShutdown: () => shutdown()
   });
   hostWatchdog.start();
@@ -2162,6 +2383,7 @@ if (isSidecar) {
     void shutdown();
   });
 } else {
+  compatCache.clear();
   startPreviewServer({
     here: HERE,
     port: Number(process.env.AG_PULSE_PORT || 17891),
@@ -2175,6 +2397,7 @@ if (isSidecar) {
     i18nModule: () => i18nModule(),
     themeModule: () => themeModule(),
     themeCss,
-    inlineSource: () => inlineSource()
+    inlineSource: () => inlineSource(),
+    usageUiModule
   });
 }

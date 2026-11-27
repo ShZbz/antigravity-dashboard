@@ -4,9 +4,12 @@ use std::ptr;
 use std::sync::OnceLock;
 
 use crate::json_projector::project_trajectory_json;
-use crate::ledger_index::query_usage_ledger_summary_json;
+use crate::ledger_index::{query_usage_ledger_summary_json, release_ledger_mem_cache};
 use crate::log_rotator::rotate_log_tail_json;
-use crate::project_ledger::read_ledger_project_summaries_json;
+use crate::project_ledger::{
+    read_ledger_project_summaries_json, read_ledger_shared_project_summaries_json,
+    release_project_mem_cache,
+};
 use crate::sanitizer_accel::{audit_open_source_privacy_json, sync_and_audit_open_source_json};
 use crate::snapshot_diff::diff_session_snapshots_json;
 use crate::sqlite_trajectory::{
@@ -475,6 +478,33 @@ unsafe extern "C" fn cb_read_ledger_project_summaries_json(
     run_single_json_arg_cb(env, info, read_ledger_project_summaries_json)
 }
 
+unsafe extern "C" fn cb_read_ledger_shared_project_summaries_json(
+    env: NapiEnv,
+    info: NapiCallbackInfo,
+) -> NapiValue {
+    run_single_json_arg_cb(env, info, read_ledger_shared_project_summaries_json)
+}
+
+/// Releases native in-memory ledger and project caches (`soft` keeps ledger snapshot + stamps; `full` clears all).
+pub fn release_native_caches_json(mode: &str) -> Option<String> {
+    let mode = mode.trim();
+    if mode != "soft" && mode != "full" {
+        return None;
+    }
+    let ledger_cleared = release_ledger_mem_cache(mode);
+    let project_cleared = release_project_mem_cache();
+    Some(format!(
+        r#"{{"released":true,"mode":"{mode}","ledgerCleared":{ledger_cleared},"projectCleared":{project_cleared}}}"#
+    ))
+}
+
+unsafe extern "C" fn cb_release_native_caches_json(
+    env: NapiEnv,
+    info: NapiCallbackInfo,
+) -> NapiValue {
+    run_single_json_arg_cb(env, info, release_native_caches_json)
+}
+
 unsafe extern "C" fn cb_audit_open_source_privacy_json(
     env: NapiEnv,
     info: NapiCallbackInfo,
@@ -651,6 +681,20 @@ pub unsafe extern "C" fn napi_register_module_v1(env: NapiEnv, exports: NapiValu
                 napi,
                 env,
                 exports,
+                b"readLedgerSharedProjectSummariesJson\0",
+                cb_read_ledger_shared_project_summaries_json,
+            );
+            export_fn(
+                napi,
+                env,
+                exports,
+                b"releaseNativeCachesJson\0",
+                cb_release_native_caches_json,
+            );
+            export_fn(
+                napi,
+                env,
+                exports,
                 b"auditOpenSourcePrivacyJson\0",
                 cb_audit_open_source_privacy_json,
             );
@@ -706,4 +750,31 @@ pub unsafe extern "C" fn napi_register_module_v1(env: NapiEnv, exports: NapiValu
         }
     }));
     exports
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_native_caches_json;
+    use crate::ledger_index::CACHE_TEST_LOCK;
+    use serde_json::Value;
+
+    #[test]
+    fn test_release_native_caches_json_contract() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(release_native_caches_json("invalid").is_none());
+
+        let soft: Value =
+            serde_json::from_str(&release_native_caches_json("soft").unwrap()).unwrap();
+        assert_eq!(soft["released"], true);
+        assert_eq!(soft["mode"], "soft");
+        assert!(soft["ledgerCleared"].is_boolean());
+        assert!(soft["projectCleared"].is_boolean());
+
+        let full: Value =
+            serde_json::from_str(&release_native_caches_json("full").unwrap()).unwrap();
+        assert_eq!(full["released"], true);
+        assert_eq!(full["mode"], "full");
+        assert!(full["ledgerCleared"].is_boolean());
+        assert!(full["projectCleared"].is_boolean());
+    }
 }

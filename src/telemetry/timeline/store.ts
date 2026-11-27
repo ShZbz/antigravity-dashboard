@@ -1,5 +1,6 @@
 // Opt-in local persistence for bounded structural model timelines.
 // Stores snapshots under <dataDir>/timeline-v1/<scope>/<cascadeId>.json.
+import { createHash } from 'node:crypto';
 import { readdir, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ClearTimelineResult, ModelTimelineSnapshot } from '../../contracts/timeline.ts';
@@ -15,6 +16,8 @@ import {
 const GUID =
   /^(?:[a-zA-Z0-9_.-]+\/)*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE = /^(?:[0-9a-f]{64}|[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})$/;
+const MAX_WRITE_CACHE_ENTRIES = 8;
+const sha256Hex = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 function validScope(scope: unknown): scope is string {
   return typeof scope === 'string' && SCOPE.test(scope) && !scope.includes('..');
@@ -23,7 +26,7 @@ function validScope(scope: unknown): scope is string {
 interface TimelineWriteCacheEntry {
   fileStamp: string;
   result: ModelTimelineSnapshot;
-  bodyKey: string;
+  bodyHash: string;
 }
 
 interface PersistedTimelineRecord {
@@ -72,14 +75,15 @@ export class TimelineStore {
     file: string,
     fileStamp: string,
     result: ModelTimelineSnapshot,
-    bodyKey: string,
+    bodyHash: string,
   ): void {
     this.writeCache.delete(file);
-    if (this.writeCache.size >= 64) {
+    while (this.writeCache.size >= MAX_WRITE_CACHE_ENTRIES) {
       const oldest = this.writeCache.keys().next().value;
-      if (oldest !== undefined) this.writeCache.delete(oldest);
+      if (oldest === undefined) break;
+      this.writeCache.delete(oldest);
     }
-    this.writeCache.set(file, { fileStamp, result, bodyKey });
+    this.writeCache.set(file, { fileStamp, result, bodyHash });
   }
 
   async load(scope: string | null | undefined, cascadeId: string): Promise<ModelTimelineSnapshot | null> {
@@ -140,12 +144,13 @@ export class TimelineStore {
     );
     if (!normalized) return null;
     const file = this.file(scope, cascadeId);
-    const bodyKey = JSON.stringify(normalized);
+    const bodyHash = sha256Hex(JSON.stringify(normalized));
     const fileStamp = await this.stamp(file);
     const cached = this.writeCache.get(file);
     if (fileStamp === null) {
       this.writeCache.delete(file);
-    } else if (cached && fileStamp !== undefined && cached.fileStamp === fileStamp && cached.bodyKey === bodyKey) {
+    } else if (cached && fileStamp !== undefined && cached.fileStamp === fileStamp && cached.bodyHash === bodyHash) {
+      this.rememberWrite(file, fileStamp, cached.result, bodyHash);
       return cached.result;
     }
 
@@ -172,7 +177,7 @@ export class TimelineStore {
     }
 
     const nextStamp = await this.stamp(file);
-    if (nextStamp) this.rememberWrite(file, nextStamp, persisted, bodyKey);
+    if (nextStamp) this.rememberWrite(file, nextStamp, persisted, bodyHash);
     return persisted;
   }
 
