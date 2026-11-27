@@ -141,6 +141,7 @@ try{
  const barProportions=await multistack.evaluate(n=>{const h=n.getBoundingClientRect().height;return {h,sum:[...n.children].reduce((s,b)=>s+parseFloat(b.style.height),0),radius:getComputedStyle(n).borderTopLeftRadius};});assert.ok(Math.abs(barProportions.h-barProportions.sum)<.2);assert.equal(barProportions.radius,'4px');
  await multistack.locator('.bar-segment').first().hover();assert.ok(await page.locator('#tip .tip-model.active').isVisible());assert.ok((await page.locator('#tip .model-share').first().textContent()).includes('%'));
  await page.waitForTimeout(180);
+ await page.locator('#tip').evaluate(n=>Promise.all(n.getAnimations().map(a=>a.finished))).catch(()=>{});
  const tipAlign=await multistack.evaluate(stack=>{const root=stack.getRootNode();const tip=root.getElementById('tip');const d=root.host.parentElement;const sr=stack.getBoundingClientRect();const tr=tip.getBoundingClientRect();const br=d.getBoundingClientRect();const expectedLeft=Math.max(br.left+12,Math.min(br.right-tr.width-12,sr.left+sr.width/2-tr.width/2));const expectedTop=sr.top-tr.height-10>=br.top+12?sr.top-tr.height-10:Math.min(br.bottom-tr.height-12,Math.max(br.top+12,sr.bottom+10));return {dx:tr.left-expectedLeft,dy:tr.top-expectedTop,brLeft:br.left,trLeft:tr.left,srLeft:sr.left};});
  assert.ok(Math.abs(tipAlign.dx)<=2&&Math.abs(tipAlign.dy)<=2,`Tooltip must align with hovered bar stack despite dialog scale/centering: ${JSON.stringify(tipAlign)}`);
  await page.locator('#legend button').first().click();assert.equal(await page.locator('#legend button').first().getAttribute('aria-pressed'),'false');assert.equal(await page.locator('#table-body tr').count(),4);
@@ -149,6 +150,7 @@ try{
  await page.locator('[data-period=day]').click();await page.screenshot({path:join(repo,'.data/usage/fixture-details-day.png')});
  assert.deepEqual(await page.locator('#plot .x-label').allTextContents(),Array.from({length:31},(_,i)=>String(i+1)),'Day period shows all calendar days 1..31 without gaps');
  const midBar=page.locator('#plot .bar-column[data-from="2026-10-08"] .stack');await midBar.hover();await page.waitForTimeout(180);
+ await page.locator('#tip').evaluate(n=>Promise.all(n.getAnimations().map(a=>a.finished))).catch(()=>{});
  const dayTipAlign=await midBar.evaluate(stack=>{const root=stack.getRootNode();const tip=root.getElementById('tip');const d=root.host.parentElement;const sr=stack.getBoundingClientRect();const tr=tip.getBoundingClientRect();const br=d.getBoundingClientRect();const expectedLeft=Math.max(br.left+12,Math.min(br.right-tr.width-12,sr.left+sr.width/2-tr.width/2));const expectedTop=sr.top-tr.height-10>=br.top+12?sr.top-tr.height-10:Math.min(br.bottom-tr.height-12,Math.max(br.top+12,sr.bottom+10));return {dx:tr.left-expectedLeft,dy:tr.top-expectedTop,bottomGap:sr.top-tr.bottom};});
  assert.ok(Math.abs(dayTipAlign.dx)<=2&&Math.abs(dayTipAlign.dy)<=2&&dayTipAlign.bottomGap>=6&&dayTipAlign.bottomGap<=16,`Day bar tooltip must sit directly above hovered bar: ${JSON.stringify(dayTipAlign)}`);
  await page.mouse.move(80,80);
