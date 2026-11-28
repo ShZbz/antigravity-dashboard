@@ -28,7 +28,7 @@ _lock_spec.loader.exec_module(_lock_module)
 lifecycle_lock, linked = _lock_module.lifecycle_lock, _lock_module.linked
 
 # REPO source configuration:
-# Originally: 'YOU-SHOULD-KNOW-ME/antigrative-dashboard' (deleted by upstream author)
+# Upstream repository: 'ATtacK030130/antigrative-dashboard' (formerly 'YOU-SHOULD-KNOW-ME/antigrative-dashboard')
 REPO = 'ShZbz/antigravity-dashboard'
 RUNTIME = ('assets', 'compat', 'sidecars', 'plugin.json')
 class RollbackError(RuntimeError):

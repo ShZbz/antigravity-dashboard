@@ -17,7 +17,7 @@ Keep the summary visible. Hover for the details.
 </div>
 
 > [!NOTE]
-> **Independent Continuation Fork:** This repository is an independent continuation fork based on `v0.8.7` of the MIT-licensed open-source project `antigrative-dashboard` (`Copyright (c) 2026 AG Pulse contributors`; the original upstream repository has been deleted by its author). Releases from **v0.8.8 onward** are independently developed and maintained by this repository (`ShZbz/antigravity-dashboard`), with no affiliation with or endorsement from the original authors.
+> **Independent Fork:** This repository is an independent fork based on `v0.8.7` of the MIT-licensed open-source project [`ATtacK030130/antigrative-dashboard`](https://github.com/ATtacK030130/antigrative-dashboard) (`Copyright (c) 2026 AG Pulse contributors`). Releases from **v0.8.8 onward** are independently developed and maintained by this repository (`ShZbz/antigravity-dashboard`), with no affiliation with or endorsement from the original authors.
 
 > [!IMPORTANT]
 > **Rust Native Engine in `v0.12.0` (`pulse-accel`) & Fallback Guidance:** `v0.12.0` introduces an optional Rust N-API native engine (`pulse-accel`) that dramatically speeds up UI responsiveness, SQLite conversation backfills, ledger queries, transcript scanning, and SVG rendering while substantially reducing V8 heap memory usage. As this is a major new native engine, if you run into any unexpected glitches or regressions, please [open an issue](https://github.com/ShZbz/antigravity-dashboard/issues) promptly with reproduction details. You can immediately fall back to the pure TypeScript runtime by setting `PULSE_DISABLE_NATIVE_ACCEL=1` in the environment, or roll back to release **`v0.11.0`** if the issue prevents normal use.
@@ -241,7 +241,7 @@ Desktop ledger: `~/.gemini/antigravity/sidecar_data/antigravity-pulse/panel/data
 
 Desktop verified on **Windows 11 / Antigravity App 2.21.1 and 2.22.0**, and standalone **Antigravity IDE 2.5.5** on Windows via a separate VSIX. Linux and macOS have three-platform CI coverage; signed-in desktop/IDE GUI verification on Linux/macOS remains open.
 
-> **Verification & Asset Attribution:** The `v0.8.0` hero/responsive/context/overview/CLI illustrations and `v0.8.7` and earlier baseline verification records in [COMPATIBILITY.md](COMPATIBILITY.md) originate from the upstream project (`AG Pulse contributors`). Features introduced in `v0.8.8+` and the updated `v0.11.0` hover cards, subagent/Swarm trees, call timeline, and multi-account usage screenshots are independently verified by the current maintainer (`ShZbz`).
+> **Verification & Asset Attribution:** The `v0.8.0` hero/responsive/context/overview/CLI illustrations and `v0.8.7` and earlier baseline verification records in [COMPATIBILITY.md](COMPATIBILITY.md) originate from the upstream project ([`ATtacK030130/antigrative-dashboard`](https://github.com/ATtacK030130/antigrative-dashboard), `AG Pulse contributors`). Features introduced in `v0.8.8+` and the updated `v0.11.0` hover cards, subagent/Swarm trees, call timeline, and multi-account usage screenshots are independently verified by the current maintainer (`ShZbz`).
 
 [Full compatibility and recovery details →](COMPATIBILITY.md)
 

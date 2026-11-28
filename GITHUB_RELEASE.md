@@ -1,8 +1,8 @@
 # Antigrative Dashboard v0.12.8
 
 > [!NOTE]
-> **Independent Continuation Fork (`v0.12.8`):**
-> This release is published by the independent continuation fork [`ShZbz/antigravity-dashboard`](https://github.com/ShZbz/antigravity-dashboard), maintained from `v0.8.7` of the MIT-licensed open-source project `antigrative-dashboard` (`Copyright (c) 2026 AG Pulse contributors`). Releases from `v0.8.8` onward are independently developed and maintained without affiliation with or endorsement from the original upstream authors.
+> **Independent Fork (`v0.12.8`):**
+> This release is published by the independent fork [`ShZbz/antigravity-dashboard`](https://github.com/ShZbz/antigravity-dashboard), maintained from `v0.8.7` of the MIT-licensed open-source project [`ATtacK030130/antigrative-dashboard`](https://github.com/ATtacK030130/antigrative-dashboard) (`Copyright (c) 2026 AG Pulse contributors`). Releases from `v0.8.8` onward are independently developed and maintained without affiliation with or endorsement from the original upstream authors.
 
 > [!IMPORTANT]
 > **Prebuilt Rust Native Binaries Included (`pulse-accel` & `ag-pulse-statusline`):**
@@ -31,8 +31,8 @@ Details: [full changelog](CHANGELOG.md) · [English README](README.md) · [IDE g
 ## 中文发布说明（v0.12.8）
 
 > [!NOTE]
-> **独立接续维护分支发布（`v0.12.8`）：**
-> 本版本由基于原 MIT 协议开源项目 `antigrative-dashboard`（`Copyright (c) 2026 AG Pulse contributors`）`v0.8.7` 独立接续维护的仓库 [`ShZbz/antigravity-dashboard`](https://github.com/ShZbz/antigravity-dashboard) 发布。自 `v0.8.8` 起的所有更新均由当前仓库独立开发与维护，与原上游作者不存在从属或背书关系。
+> **独立分支发布（`v0.12.8`）：**
+> 本版本由基于原 MIT 协议开源项目 [`ATtacK030130/antigrative-dashboard`](https://github.com/ATtacK030130/antigrative-dashboard)（`Copyright (c) 2026 AG Pulse contributors`）`v0.8.7` 独立衍生开发与维护的仓库 [`ShZbz/antigravity-dashboard`](https://github.com/ShZbz/antigravity-dashboard) 发布。自 `v0.8.8` 起的所有更新均由当前仓库独立开发与维护，与原上游作者不存在从属或背书关系。
 
 > [!IMPORTANT]
 > **已内置 5 平台预编译 Rust 原生引擎：**

@@ -17,7 +17,7 @@
 </div>
 
 > [!NOTE]
-> **独立接续维护声明（Independent Continuation Fork）：** 本仓库基于原 MIT 协议开源项目 `antigrative-dashboard`（`Copyright (c) 2026 AG Pulse contributors`，原上游仓库已被作者删除）的 `v0.8.7` 版本独立接续维护。**`v0.8.8` 及之后版本**由当前仓库（`ShZbz/antigravity-dashboard`）独立开发与维护，与原作者不存在从属、合作或背书关系。
+> **独立分支声明（Independent Fork）：** 本仓库基于原 MIT 协议开源项目 [`ATtacK030130/antigrative-dashboard`](https://github.com/ATtacK030130/antigrative-dashboard)（`Copyright (c) 2026 AG Pulse contributors`）的 `v0.8.7` 版本独立衍生开发与维护。**`v0.8.8` 及之后版本**由当前仓库（`ShZbz/antigravity-dashboard`）独立开发与维护，与原作者不存在从属、合作或背书关系。
 
 > [!IMPORTANT]
 > **`v0.12.0` Rust 原生引擎提示与回退说明：** `v0.12.0` 正式引入 **Rust 原生加速引擎（`pulse-accel`）**，通过 SQLite 本地直读旁路、二进制用量索引、堆外结构化 Diff 与文本脱敏等底层加速大幅提升界面响应速度，并显著缓解早期版本长时间运行或大账本场景下内存占用过高的问题。由于新引擎刚全量上线，如您在使用过程中遇到任何异常、数据偏差或兼容性问题，欢迎及时前往 [GitHub Issues](https://github.com/ShZbz/antigravity-dashboard/issues) 反馈；如需临时关闭原生加速，可设置环境变量 `PULSE_DISABLE_NATIVE_ACCEL=1` 无缝切换回纯 TypeScript 模式，若问题暂时无法容忍亦可先回退至 **`v0.11.0`** 版本。
@@ -216,7 +216,7 @@ Windows 用户也可直接运行 `./install.ps1`，Linux / macOS 运行 `sh inst
 
 当前实机验证：**Windows 11 / Antigravity App 2.21.1、2.22.0** 及独立 **Antigravity IDE 2.5.5**（专用 VSIX）。Linux/macOS 具备三系统 CI 自动化覆盖，完整登录 GUI 仍待实机验收。
 
-> **验证与素材说明：** 上方沿用的 `v0.8.0` 顶部横幅/窄窗响应式/上下文/活动热力图/CLI 示意图及 [COMPATIBILITY.md](COMPATIBILITY.md) 中 `v0.8.7` 及以前的基线验证描述源自原上游项目（`AG Pulse contributors`）；`v0.8.8+` 新增特性与 `v0.11.0` 更新的会话统计卡、多模型环形卡片、子代理/Swarm 状态树、调用时间线树及多账号用量详情截图由当前维护者（`ShZbz`）独立实机验证。
+> **验证与素材说明：** 上方沿用的 `v0.8.0` 顶部横幅/窄窗响应式/上下文/活动热力图/CLI 示意图及 [COMPATIBILITY.md](COMPATIBILITY.md) 中 `v0.8.7` 及以前的基线验证描述源自原上游项目（[`ATtacK030130/antigrative-dashboard`](https://github.com/ATtacK030130/antigrative-dashboard)，`AG Pulse contributors`）；`v0.8.8+` 新增特性与 `v0.11.0` 更新的会话统计卡、多模型环形卡片、子代理/Swarm 状态树、调用时间线树及多账号用量详情截图由当前维护者（`ShZbz`）独立实机验证。
 
 [完整边界与更新策略 →](COMPATIBILITY.md)
 
